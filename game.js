@@ -860,6 +860,7 @@ class Game {
     // Control variables
     this.keys = {};
     this.mouse = { x: LOGICAL_WIDTH / 2, y: LOGICAL_HEIGHT * 0.8, down: false };
+    this.isMouseActive = false;
     this.lastShotTime = 0;
     
     // Settings & State
@@ -894,6 +895,7 @@ class Game {
     // Keyboard inputs
     window.addEventListener('keydown', (e) => {
       this.keys[e.key] = true;
+      this.isMouseActive = false; // Disable mouse follow on keyboard input
       
       // Escape for Pause toggle
       if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
@@ -934,6 +936,7 @@ class Game {
       if (this.state === GameState.PLAYING) {
         sounds.init();
         this.mouse.down = true;
+        this.isMouseActive = true; // Set mouse active on click
         const coords = getMouseCoords(e);
         this.mouse.x = coords.x;
         this.mouse.y = coords.y;
@@ -942,6 +945,7 @@ class Game {
 
     const handlePointerMove = (e) => {
       if (this.state === GameState.PLAYING) {
+        this.isMouseActive = true; // Set mouse active on movement
         const coords = getMouseCoords(e);
         this.mouse.x = coords.x;
         this.mouse.y = coords.y;
@@ -1471,7 +1475,7 @@ class Game {
       const len = Math.hypot(moveX, moveY);
       this.player.x += (moveX / len) * PLAYER_SPEED;
       this.player.y += (moveY / len) * PLAYER_SPEED;
-    } else {
+    } else if (this.isMouseActive) {
       // Smoothly slide player towards mouse/touch coordinate
       const targetX = this.mouse.x - this.player.width / 2;
       const targetY = this.mouse.y - this.player.height / 2;
