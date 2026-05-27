@@ -324,6 +324,7 @@ class PlayerShip {
     this.weaponExp = 0;
     this.invulnerable = 0; // Frames of invulnerability
     this.thrusterAnim = 0;
+    this.hitCountForHoming = 0;
   }
 
   resetPosition() {
@@ -334,7 +335,16 @@ class PlayerShip {
   hit(damage = 25) {
     if (this.invulnerable > 0) return false;
     this.shield -= damage;
-    this.homing = false; // Lose homing ability on hit
+    if (this.homing > 0) {
+      this.hitCountForHoming++;
+      if (this.hitCountForHoming >= 3) {
+        this.homing--;
+        this.hitCountForHoming = 0;
+      }
+    } else {
+      this.homing = 0; // Lose homing ability on hit
+      this.hitCountForHoming = 0;
+    }
     sounds.playPlayerHit();
     
     if (this.shield <= 0) {
@@ -459,6 +469,7 @@ class Laser {
     this.radius = 3;
     this.length = 14;
     this.angle = angle;
+    this.skipDraw = false;
   }
 
   update(enemies = []) {
@@ -491,6 +502,8 @@ class Laser {
   }
 
   draw(ctx) {
+    if (this.skipDraw) return;
+    
     ctx.save();
     ctx.shadowBlur = 10;
     ctx.shadowColor = this.color;
@@ -870,6 +883,7 @@ class Game {
     this.hudElement = document.getElementById('hud');
     this.scoreValElement = document.getElementById('hud-score');
     this.levelValElement = document.getElementById('hud-level');
+    this.homingValElement = document.getElementById('hud-homing');
     this.livesValElement = document.getElementById('hud-lives');
     this.weaponBarElement = document.getElementById('hud-weapon-bar');
     this.weaponNameElement = document.getElementById('hud-weapon-name');
@@ -1094,17 +1108,20 @@ class Game {
   spawnEnemies() {
     if (this.bossSpawned) return; // Wait until boss is destroyed
     
+    const activeNormalEnemies = this.enemies.filter(e => e.type !== 'boss').length;
+    
     // Trigger Boss Fight!
     if (!this.bossSpawned && this.enemiesKilled >= this.enemiesNeededForLevel) {
-      this.bossSpawned = true;
-      this.enemies.push(new Enemy('boss', this.level, this.player));
-      sounds.playExplosion('boss'); // Sound cues boss spawn
+      if (activeNormalEnemies === 0) {
+        this.bossSpawned = true;
+        this.enemies.push(new Enemy('boss', this.level, this.player));
+        sounds.playExplosion('boss'); // Sound cues boss spawn
+      }
       return;
     }
     
     // Control enemy counts based on levels (starts low, scales extremely high)
     const maxOnScreen = Math.min(400, 3 + Math.floor(Math.pow(this.level, 2.0) * 3));
-    const activeNormalEnemies = this.enemies.filter(e => e.type !== 'boss').length;
     
     // Spawn chance accelerates exponentially
     if (activeNormalEnemies < maxOnScreen && Math.random() < 0.01 + Math.pow(this.level, 2.2) * 0.002) {
@@ -1136,8 +1153,21 @@ class Game {
     } else {
       const base = WEAPONS[WEAPONS.length - 1];
       const extraPower = this.player.weaponTier - (WEAPONS.length - 1);
+      const weaponLevel = this.player.weaponTier + 1; // 1-indexed weapon level
       
-      damageMult = 1 + extraPower * 0.5; // Increases damage beyond max tier
+      if (weaponLevel >= 20) {
+        // Level 20 (HYPER PULSE +11) onwards: Ultimate power jump (+100x per level)
+        damageMult = 250.0 + (extraPower - 11) * 100.0;
+      } else if (weaponLevel >= 15) {
+        // Level 15 to 19 (HYPER PULSE +6 ~ +10): Huge power jump and steeper scaling (+30x per level)
+        damageMult = 30.0 + (extraPower - 6) * 30.0;
+      } else if (weaponLevel >= 11) {
+        // From Level 11 to 14 (HYPER PULSE +2 ~ +5) (+2.0x per level)
+        damageMult = 5.0 + (extraPower - 2) * 2.0; 
+      } else {
+        // Level 10 (HYPER PULSE +1)
+        damageMult = 3.0; 
+      }
       
       config = {
         name: `HYPER PULSE +${extraPower}`,
@@ -1175,7 +1205,14 @@ class Game {
       }
 
       // Clone shooting
-      for (let c = 0; c < this.player.clonePositions.length; c++) {
+      const totalClones = this.player.clonePositions.length;
+      // Calculate a universal skip probability based on total clones
+      // Using power of 0.8 to handle up to 50+ clones safely.
+      // 1 clone: 0% skip, 10 clones: ~84% skip, 50 clones: ~95% skip
+      // This means even with 50 clones, the drawn bullet count equals roughly 2.2 clones' worth of bullets.
+      const skipProb = totalClones > 0 ? (1.0 - (1.0 / Math.pow(totalClones, 0.8))) : 0;
+      
+      for (let c = 0; c < totalClones; c++) {
         const pos = this.player.clonePositions[c];
         const cPx = pos.x + this.player.width / 2;
         const cPy = pos.y;
@@ -1189,6 +1226,8 @@ class Game {
           const laser = new Laser(cPx + xOffset, cPy + yOffset, angleOffset, true, speed, config.color);
           laser.damage = damageMult;
           laser.isHoming = this.player.homing;
+          // Skip rendering for performance, but keep physics/damage
+          laser.skipDraw = Math.random() < skipProb;
           this.lasers.push(laser);
         }
       }
@@ -1419,7 +1458,7 @@ class Game {
           this.score += 100;
         } 
         else if (item.type === 'life') {
-          this.player.lives = Math.min(this.player.lives + 1, 5); // max 5 lives
+          this.player.lives++; // No max lives limit
           this.score += 500;
         }
         else if (item.type === 'clone') {
@@ -1428,7 +1467,7 @@ class Game {
           this.score += 300;
         }
         else if (item.type === 'homing') {
-          this.player.homing = true;
+          this.player.homing = (this.player.homing > 0 ? this.player.homing : 0) + 1;
           this.score += 500;
         }
         
@@ -1554,9 +1593,14 @@ class Game {
   updateHUD() {
     this.scoreValElement.textContent = String(this.score).padStart(6, '0');
     this.levelValElement.textContent = this.level;
+    this.homingValElement.textContent = (this.player && this.player.homing) ? this.player.homing : 0;
     
     // Heart icons representation
-    this.livesValElement.textContent = '♥'.repeat(Math.max(0, this.player.lives));
+    if (this.player.lives > 5) {
+      this.livesValElement.textContent = `♥ x ${this.player.lives}`;
+    } else {
+      this.livesValElement.textContent = '♥'.repeat(Math.max(0, this.player.lives));
+    }
     
     // Shield bar percent
     this.shieldBarElement.style.width = `${Math.max(0, this.player.shield)}%`;
@@ -1597,12 +1641,32 @@ class Game {
       return;
     }
 
-    // Draw Powerups
-    // Draw particles
-    this.particles.forEach(p => p.draw(this.ctx));
+    // Draw particles (Thin out when clones >= 10 for performance)
+    if (this.player) {
+      if (this.player.clones >= 15) {
+        this.particles.forEach((p, i) => { if (i % 4 === 0) p.draw(this.ctx); });
+      } else if (this.player.clones >= 10) {
+        this.particles.forEach((p, i) => { if (i % 2 === 0) p.draw(this.ctx); });
+      } else {
+        this.particles.forEach(p => p.draw(this.ctx));
+      }
+    } else {
+      this.particles.forEach(p => p.draw(this.ctx));
+    }
     
-    // Draw player lasers (Underneath enemies and player)
-    this.lasers.filter(l => l.isPlayer).forEach(laser => laser.draw(this.ctx));
+    // Draw player lasers (Thin out when clones >= 10 for performance)
+    const pLasers = this.lasers.filter(l => l.isPlayer);
+    if (this.player) {
+      if (this.player.clones >= 15) {
+        pLasers.forEach((laser, i) => { if (i % 4 === 0) laser.draw(this.ctx); });
+      } else if (this.player.clones >= 10) {
+        pLasers.forEach((laser, i) => { if (i % 2 === 0) laser.draw(this.ctx); });
+      } else {
+        pLasers.forEach(laser => laser.draw(this.ctx));
+      }
+    } else {
+      pLasers.forEach(laser => laser.draw(this.ctx));
+    }
     
     // Draw powerups
     this.powerups.forEach(p => p.draw(this.ctx));
