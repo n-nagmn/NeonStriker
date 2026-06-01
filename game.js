@@ -473,7 +473,8 @@ class Laser {
   }
 
   update(enemies = []) {
-    if (this.isHoming && this.isPlayer && enemies.length > 0) {
+    // Only update homing every few frames based on an internal counter or random to save CPU
+    if (this.isHoming && this.isPlayer && enemies.length > 0 && Math.random() < 0.3) {
       let nearestEnemy = null;
       let minTargetDist = Infinity;
       for (const enemy of enemies) {
@@ -1120,11 +1121,11 @@ class Game {
       return;
     }
     
-    // Control enemy counts based on levels (starts low, scales extremely high)
-    const maxOnScreen = Math.min(400, 3 + Math.floor(Math.pow(this.level, 2.0) * 3));
+    // Control enemy counts based on levels (starts low, scales reasonably)
+    const maxOnScreen = Math.min(40, 3 + Math.floor(Math.pow(this.level, 1.5) * 2));
     
     // Spawn chance accelerates exponentially
-    if (activeNormalEnemies < maxOnScreen && Math.random() < 0.01 + Math.pow(this.level, 2.2) * 0.002) {
+    if (!this.bossSpawned && this.enemiesKilled < this.enemiesNeededForLevel && activeNormalEnemies < maxOnScreen && Math.random() < 0.01 + Math.pow(this.level, 1.5) * 0.005) {
       // Pick random enemy type
       const roll = Math.random();
       let type = 'drone';
