@@ -1022,12 +1022,22 @@ class Game {
   checkIfHighScore() {
     // 常に名前入力フォームを表示してスコア送信できるようにする
     this.highScoreForm.classList.remove('hidden');
+    
+    const savedName = localStorage.getItem('neon_striker_last_name');
+    if (savedName) {
+      this.playerNameInput.value = savedName;
+    } else {
+      this.playerNameInput.value = '';
+    }
+    
     this.playerNameInput.focus();
   }
 
   async submitHighScore() {
     const name = this.playerNameInput.value.trim().toUpperCase() || 'AAA';
     this.highScoreForm.classList.add('hidden');
+    
+    localStorage.setItem('neon_striker_last_name', name);
     
     try {
       await fetch('api.php', {
