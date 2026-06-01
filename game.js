@@ -989,7 +989,9 @@ class Game {
     document.getElementById('btn-start').addEventListener('click', () => this.startGame());
     document.getElementById('btn-resume').addEventListener('click', () => this.resumeGame());
     document.getElementById('btn-restart-paused').addEventListener('click', () => this.startGame());
+    document.getElementById('btn-return-title-paused').addEventListener('click', () => this.returnToTitle());
     document.getElementById('btn-restart').addEventListener('click', () => this.startGame());
+    document.getElementById('btn-return-title').addEventListener('click', () => this.returnToTitle());
     document.getElementById('btn-submit-score').addEventListener('click', () => this.submitHighScore());
   }
 
@@ -1085,6 +1087,20 @@ class Game {
     if (this.state !== GameState.PLAYING) return;
     this.state = GameState.PAUSED;
     this.pauseMenu.classList.remove('hidden');
+  }
+
+  returnToTitle() {
+    this.state = GameState.MENU;
+    this.player = null;
+    this.lasers = [];
+    this.enemies = [];
+    this.particles = [];
+    this.powerups = [];
+    this.startMenu.classList.remove('hidden');
+    this.pauseMenu.classList.add('hidden');
+    this.gameOverMenu.classList.add('hidden');
+    this.hudElement.classList.add('hidden');
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
   resumeGame() {
