@@ -994,60 +994,51 @@ class Game {
   }
 
   // --- High Score Functions ---
-  loadHighScores() {
+  async loadHighScores() {
     const list = document.getElementById('leaderboard-list');
-    list.innerHTML = '';
-    const scores = JSON.parse(localStorage.getItem('neon_striker_scores')) || [
-      { name: 'NTX', score: 25000 },
-      { name: 'SYS', score: 15000 },
-      { name: 'CYB', score: 5000 }
-    ];
-    
-    scores.forEach((entry, idx) => {
-      const li = document.createElement('li');
-      if (idx === 0) {
-        li.style.borderLeftColor = 'var(--neon-yellow)';
-        li.style.background = 'rgba(255, 222, 0, 0.03)';
-      } else if (idx === 1) {
-        li.style.borderLeftColor = 'var(--neon-cyan)';
-      }
-      li.innerHTML = `<span class="rank-name">${entry.name}</span> <span class="rank-score">${entry.score.toLocaleString()}</span>`;
-      list.appendChild(li);
-    });
-  }
-
-  checkIfHighScore() {
-    const scores = JSON.parse(localStorage.getItem('neon_striker_scores')) || [
-      { name: 'NTX', score: 25000 },
-      { name: 'SYS', score: 15000 },
-      { name: 'CYB', score: 5000 }
-    ];
-    
-    // Check if score is higher than the lowest on board, or board has room
-    if (scores.length < 5 || this.score > scores[scores.length - 1].score) {
-      this.highScoreForm.classList.remove('hidden');
-      this.playerNameInput.value = '';
-      this.playerNameInput.focus();
-    } else {
-      this.highScoreForm.classList.add('hidden');
+    list.innerHTML = '<li>Loading...</li>';
+    try {
+      const res = await fetch('api.php');
+      const data = await res.json();
+      const scores = data.scores || [];
+      
+      list.innerHTML = '';
+      scores.forEach((entry, idx) => {
+        const li = document.createElement('li');
+        if (idx === 0) {
+          li.innerHTML = `<span class="rank-name neon-text-pink">${entry.name}</span> <span class="rank-score">${entry.score.toLocaleString()}</span>`;
+        } else {
+          li.innerHTML = `<span class="rank-name">${entry.name}</span> <span class="rank-score">${entry.score.toLocaleString()}</span>`;
+        }
+        list.appendChild(li);
+      });
+      this.currentScores = scores;
+    } catch(e) {
+      list.innerHTML = '<li>Error loading</li>';
+      this.currentScores = [];
     }
   }
 
-  submitHighScore() {
+  checkIfHighScore() {
+    // 常に名前入力フォームを表示してスコア送信できるようにする
+    this.highScoreForm.classList.remove('hidden');
+    this.playerNameInput.focus();
+  }
+
+  async submitHighScore() {
     const name = this.playerNameInput.value.trim().toUpperCase() || 'AAA';
-    let scores = JSON.parse(localStorage.getItem('neon_striker_scores')) || [
-      { name: 'NTX', score: 25000 },
-      { name: 'SYS', score: 15000 },
-      { name: 'CYB', score: 5000 }
-    ];
-
-    scores.push({ name, score: this.score });
-    scores.sort((a, b) => b.score - a.score);
-    scores = scores.slice(0, 5); // Keep top 5
-
-    localStorage.setItem('neon_striker_scores', JSON.stringify(scores));
     this.highScoreForm.classList.add('hidden');
-    this.loadHighScores();
+    
+    try {
+      await fetch('api.php', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name, score: this.score })
+      });
+      this.loadHighScores();
+    } catch(e) {
+      console.error(e);
+    }
   }
 
   // --- Game State Flow Control ---
@@ -1055,6 +1046,7 @@ class Game {
     sounds.init();
     sounds.resume();
     sounds.playLevelUp();
+    this.loadHighScores();
 
     this.player = new PlayerShip();
     this.lasers = [];

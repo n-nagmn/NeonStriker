@@ -1,32 +1,23 @@
-# Neon Striker - Game Mechanics Update
+﻿# NeonStriker (ネオンストライカー)
 
-This repository contains the latest updates for **Neon Striker**, a high-octane neon-themed space shooter.
+**NeonStriker** は、サイバーパンク風のネオン輝く宇宙を舞台にした、爽快な2Dシューティングゲームです。Webブラウザからすぐに遊ぶことができます。
 
-## Recent Changes & Features
+## ゲームの目的
+迫りくる敵機を撃破しながら、できるだけ高いスコアを目指してステージを進んでください！
+レベル（ステージ）が上がると敵の攻撃が激しくなりますが、様々なパワーアップアイテムを駆使して生き残りましょう。
+ゲームオーバー時にはスコアを登録し、ランキングで他のプレイヤーと競うことができます。
 
-### Weapon & Power-up System
-- **Dynamic Weapon Tiers**: Weapon upgrades (`W` item) now scale up to **9 stages (9-Way spread)**.
-- **Infinite Power Scaling**: Beyond stage 9, collecting weapon items increases **bullet damage** infinitely rather than bullet count, ensuring high-tier progression remains meaningful without performance loss.
-- **Homing Missiles (`H`)**:
-  - Increased drop rate to **20%**.
-  - Automatically targets the nearest enemy in front of the player.
-  - **Status Reset**: Homing ability is lost if the player ship takes damage.
-- **Enhanced Drop Rates**: Overall item drop rate increased to **30%** for faster progression.
+## 操作方法
+*   **移動**: マウスを動かすか、キーボードの `矢印キー` または `W / A / S / D`
+*   **攻撃**: マウスの左クリック長押し、または `Space` キー長押し
 
-### Snake Formation (Trailing Clones)
-- **Sequential Follow**: Clones now follow the player in a smooth, one-by-one "Snake" formation.
-- **Dynamic Spacing**: The distance between clones automatically tightens as the number of clones increases, maintaining a compact and visually satisfying trail even with a large army.
-- **Clone Durability**: Each clone now has **3 HP**, allowing it to withstand multiple hits before being destroyed.
+## アイテムの種類
+敵を倒すとドロップするアイテムを拾って、自機を強力にアップグレードしましょう！
+*   **[W] Weapon (ウェポン)**: レーザーの同時発射数が増えます（最大9方向）。最大まで強化した後は、レーザーの威力が大幅にアップしていきます。
+*   **[H] Homing (ホーミング)**: レーザーが敵を自動追尾するようになります。（※ダメージを受けるとホーミング状態は解除されます）
+*   **[C] Clone (クローン)**: 自機の後をついてきて一緒に攻撃してくれる「オプション（分身）」が追加されます。最大まで連なると大迫力の攻撃が可能です。
+*   **[S] Shield (シールド)**: 自機のバリアゲージが回復します。
+*   **[L] Life (ライフ)**: 残機（リトライ回数）が1増えます。
 
-### Balancing & Difficulty Scaling
-- **Adaptive Health**: Blocker (Square) enemies and Bosses now have their health dynamically adjusted based on the player's current power and whether Homing is active, maintaining a consistent challenge.
-- **Boss Progression**: Fixed level advancement logic to ensure all active bosses must be defeated before proceeding to the next level.
-
-### Performance Optimizations
-- **Hit Effect Throttling**: Visual sparks on hit are now throttled during high-frequency fire to prevent performance lag.
-- **Particle Optimization**: Optimized explosion particle counts for normal enemies to ensure smooth gameplay during intense combat.
-
-## How to Play
-- **Move**: Mouse or Arrow Keys / WASD
-- **Shoot**: Hold Space or Left Mouse Button
-- **Collect**: Pick up floating power-ups (`W`, `H`, `C`, `L`, `S`) to enhance your ship.
+## 動作環境
+モダンなPC向けWebブラウザ（Google Chrome, Safari, Edge, Firefoxなど）で動作します。
