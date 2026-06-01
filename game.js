@@ -1278,6 +1278,7 @@ class Game {
             
             // Register score
             this.score += enemy.scoreValue;
+            this.updateHUD();
             
             if (enemy.type === 'boss') {
               this.bossDefeatedCount++;
