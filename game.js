@@ -288,6 +288,7 @@ class GameParticle {
     this.alpha = 1;
     this.decay = 0.015 + Math.random() * 0.025;
     this.size = 1.5 + Math.random() * 3.5;
+    this.dead = false;
   }
 
   update() {
@@ -307,6 +308,21 @@ class GameParticle {
     ctx.fill();
     ctx.restore();
   }
+}
+
+// dead フラグが立った要素を順序を保ったまま 1 パスで取り除く。
+// splice を繰り返すと 1 回ごとに後続要素を全部ずらすため、
+// 要素数が数千に達する終盤で O(n^2) になっていた。
+function compactArray(arr) {
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) {
+    const item = arr[i];
+    if (!item.dead) {
+      if (w !== i) arr[w] = item;
+      w++;
+    }
+  }
+  arr.length = w;
 }
 
 // --- Player Spaceship Class ---
@@ -470,6 +486,7 @@ class Laser {
     this.length = 14;
     this.angle = angle;
     this.skipDraw = false;
+    this.dead = false;
   }
 
   update(enemies = []) {
@@ -479,9 +496,11 @@ class Laser {
       let minTargetDist = Infinity;
       for (const enemy of enemies) {
         if (enemy.y < this.y + 50) { // Target enemies roughly ahead
-          const dist = Math.hypot(enemy.x - this.x, enemy.y - this.y);
-          if (dist < minTargetDist) {
-            minTargetDist = dist;
+          const ddx = enemy.x - this.x;
+          const ddy = enemy.y - this.y;
+          const distSq = ddx * ddx + ddy * ddy;
+          if (distSq < minTargetDist) {
+            minTargetDist = distSq;
             nearestEnemy = enemy;
           }
         }
@@ -527,6 +546,7 @@ class Laser {
 // --- Enemy Spaceships ---
 class Enemy {
   constructor(type, level, player = null) {
+    this.dead = false;
     this.type = type; // 'drone', 'speeder', 'tank', 'boss'
     this.x = 0;
     this.y = -50;
@@ -862,6 +882,10 @@ class Game {
     this.enemies = [];
     this.particles = [];
     this.powerups = [];
+    this.hudDirty = false;
+    // クローン中心座標のキャッシュ (毎フレーム確保しないよう使い回す)
+    this._cloneCx = new Float64Array(64);
+    this._cloneCy = new Float64Array(64);
     
     // Score & Progress
     this.score = 0;
@@ -1258,18 +1282,20 @@ class Game {
     // 1. Player Lasers collides with Enemies
     for (let lIdx = this.lasers.length - 1; lIdx >= 0; lIdx--) {
       const laser = this.lasers[lIdx];
-      if (!laser.isPlayer) continue;
-      
+      if (!laser.isPlayer || laser.dead) continue;
+
       for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
         const enemy = this.enemies[eIdx];
-        
+        if (enemy.dead) continue;
+
         // Simple radial collision
-        const dist = Math.hypot(laser.x - enemy.x, laser.y - enemy.y);
+        const dx = laser.x - enemy.x;
+        const dy = laser.y - enemy.y;
         const collisionThreshold = enemy.size + laser.radius;
-        
-        if (dist < collisionThreshold) {
+
+        if (dx * dx + dy * dy < collisionThreshold * collisionThreshold) {
           // Remove laser
-          this.lasers.splice(lIdx, 1);
+          laser.dead = true;
           
           const now = Date.now();
           // Throttle visual effects if hits are too frequent (less than 50ms apart per enemy)
@@ -1296,7 +1322,7 @@ class Game {
             
             // Register score
             this.score += enemy.scoreValue;
-            this.updateHUD();
+            this.hudDirty = true;
             
             if (enemy.type === 'boss') {
               this.bossDefeatedCount++;
@@ -1340,7 +1366,7 @@ class Game {
               }
             }
             
-            this.enemies.splice(eIdx, 1);
+            enemy.dead = true;
           }
           break; // break enemy loop, check next laser
         }
@@ -1351,24 +1377,42 @@ class Game {
     const pxCenter = this.player.x + this.player.width / 2;
     const pyCenter = this.player.y + this.player.height / 2;
     const playerRadius = this.player.width * 0.4;
+
+    // クローンの中心座標はフレーム内で不変なので先に1回だけ求めておく
+    const clonePositions = this.player.clonePositions;
+    const cloneCount = clonePositions.length;
+    if (this._cloneCx.length < cloneCount) {
+      this._cloneCx = new Float64Array(cloneCount * 2);
+      this._cloneCy = new Float64Array(cloneCount * 2);
+    }
+    const cloneCx = this._cloneCx;
+    const cloneCy = this._cloneCy;
+    const halfW = this.player.width / 2;
+    const halfH = this.player.height / 2;
+    for (let c = 0; c < cloneCount; c++) {
+      cloneCx[c] = clonePositions[c].x + halfW;
+      cloneCy[c] = clonePositions[c].y + halfH;
+    }
     
     // Check enemy lasers hit player or clones
     for (let lIdx = this.lasers.length - 1; lIdx >= 0; lIdx--) {
       const laser = this.lasers[lIdx];
-      if (laser.isPlayer) continue;
+      if (laser.isPlayer || laser.dead) continue;
       
       let hitCloneIdx = -1;
-      for (let c = 0; c < this.player.clonePositions.length; c++) {
-        const cPxCenter = this.player.clonePositions[c].x + this.player.width / 2;
-        const cPyCenter = this.player.clonePositions[c].y + this.player.height / 2;
-        if (Math.hypot(laser.x - cPxCenter, laser.y - cPyCenter) < playerRadius + laser.radius) {
+      const laserCloneR = playerRadius + laser.radius;
+      const laserCloneRSq = laserCloneR * laserCloneR;
+      for (let c = 0; c < cloneCount; c++) {
+        const dx = laser.x - cloneCx[c];
+        const dy = laser.y - cloneCy[c];
+        if (dx * dx + dy * dy < laserCloneRSq) {
           hitCloneIdx = c;
           break;
         }
       }
 
       if (hitCloneIdx !== -1) {
-        this.lasers.splice(lIdx, 1);
+        laser.dead = true;
         for (let i = 0; i < 15; i++) {
           this.particles.push(new GameParticle(laser.x, laser.y, '#b800ff', 1.5));
         }
@@ -1378,10 +1422,11 @@ class Game {
         continue;
       }
       
-      const dist = Math.hypot(laser.x - pxCenter, laser.y - pyCenter);
-      if (dist < playerRadius + laser.radius) {
+      const lpdx = laser.x - pxCenter;
+      const lpdy = laser.y - pyCenter;
+      if (lpdx * lpdx + lpdy * lpdy < laserCloneRSq) {
         // Remove laser
-        this.lasers.splice(lIdx, 1);
+        laser.dead = true;
         
         // Spawn sparks
         for (let i = 0; i < 6; i++) {
@@ -1390,7 +1435,7 @@ class Game {
 
         // Damage Player
         const died = this.player.hit(20);
-        this.updateHUD();
+        this.hudDirty = true;
         
         if (died) {
           this.explodePlayer();
@@ -1406,12 +1451,15 @@ class Game {
     // Check enemies direct crashes into player or clones
     for (let eIdx = this.enemies.length - 1; eIdx >= 0; eIdx--) {
       const enemy = this.enemies[eIdx];
-      
+      if (enemy.dead) continue;
+
       let hitCloneIdx = -1;
-      for (let c = 0; c < this.player.clonePositions.length; c++) {
-        const cPxCenter = this.player.clonePositions[c].x + this.player.width / 2;
-        const cPyCenter = this.player.clonePositions[c].y + this.player.height / 2;
-        if (Math.hypot(enemy.x - cPxCenter, enemy.y - cPyCenter) < playerRadius + enemy.size * 0.8) {
+      const enemyCloneR = playerRadius + enemy.size * 0.8;
+      const enemyCloneRSq = enemyCloneR * enemyCloneR;
+      for (let c = 0; c < cloneCount; c++) {
+        const dx = enemy.x - cloneCx[c];
+        const dy = enemy.y - cloneCy[c];
+        if (dx * dx + dy * dy < enemyCloneRSq) {
           hitCloneIdx = c;
           break;
         }
@@ -1425,27 +1473,28 @@ class Game {
         this.player.clones = Math.ceil(this.player.cloneHP / 3);
         sounds.playExplosion('normal');
         if (enemy.type !== 'boss') {
-          this.enemies.splice(eIdx, 1);
+          enemy.dead = true;
         }
         continue;
       }
 
-      const dist = Math.hypot(enemy.x - pxCenter, enemy.y - pyCenter);
-      
-      if (dist < playerRadius + enemy.size * 0.8) {
+      const epdx = enemy.x - pxCenter;
+      const epdy = enemy.y - pyCenter;
+
+      if (epdx * epdx + epdy * epdy < enemyCloneRSq) {
         // Destroy non-boss enemies instantly on crash
         if (enemy.type !== 'boss') {
           sounds.playExplosion('normal');
           for (let i = 0; i < 15; i++) {
             this.particles.push(new GameParticle(enemy.x, enemy.y, enemy.color, 1.2));
           }
-          this.enemies.splice(eIdx, 1);
+          enemy.dead = true;
         }
         
         // Damage player severely
         const damage = enemy.type === 'boss' ? 50 : 35;
         const died = this.player.hit(damage);
-        this.updateHUD();
+        this.hudDirty = true;
         
         if (died) {
           this.explodePlayer();
@@ -1462,9 +1511,11 @@ class Game {
     // 3. Player picks up Power-ups
     for (let pIdx = this.powerups.length - 1; pIdx >= 0; pIdx--) {
       const item = this.powerups[pIdx];
-      const dist = Math.hypot(item.x - pxCenter, item.y - pyCenter);
-      
-      if (dist < playerRadius + item.size) {
+      const ipdx = item.x - pxCenter;
+      const ipdy = item.y - pyCenter;
+      const itemR = playerRadius + item.size;
+
+      if (ipdx * ipdx + ipdy * ipdy < itemR * itemR) {
         sounds.playPowerUp();
         
         // Apply powerup reward
@@ -1496,8 +1547,8 @@ class Game {
           this.particles.push(new GameParticle(item.x, item.y, item.color, 1.5));
         }
         
-        this.powerups.splice(pIdx, 1);
-        this.updateHUD();
+        item.dead = true;
+        this.hudDirty = true;
       }
     }
   }
@@ -1552,14 +1603,15 @@ class Game {
       this.fireLaser();
     }
 
-    // Update Lasers
+    // Update Lasers (後ろから update するのは従来どおり。削除は後段で一括して詰める)
     for (let i = this.lasers.length - 1; i >= 0; i--) {
       const laser = this.lasers[i];
       laser.update(this.enemies);
       if (laser.isOutOfBounds()) {
-        this.lasers.splice(i, 1);
+        laser.dead = true;
       }
     }
+    compactArray(this.lasers);
 
     // Spawn and Update Enemies
     this.spawnEnemies();
@@ -1568,11 +1620,11 @@ class Game {
       enemy.update(this.player.x + this.player.width / 2, this.player.y, this.lasers, this.lasers);
       
       if (enemy.isOutOfBounds()) {
-        this.enemies.splice(i, 1);
+        enemy.dead = true;
         // Penalty for letting normal enemies pass (lose small shield energy)
         if (enemy.type !== 'boss') {
           this.player.shield = Math.max(this.player.shield - 8, 0);
-          this.updateHUD();
+          this.hudDirty = true;
           if (this.player.shield <= 0 && this.player.lives > 0) {
             const dead = this.player.hit(0); // will trigger life loss
             if (dead) {
@@ -1588,25 +1640,40 @@ class Game {
       }
     }
 
+    compactArray(this.enemies);
+
     // Update Particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const particle = this.particles[i];
       particle.update();
       if (particle.alpha <= 0) {
-        this.particles.splice(i, 1);
+        particle.dead = true;
       }
     }
+    compactArray(this.particles);
 
     // Update Powerups
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const p = this.powerups[i];
       p.update();
       if (p.isOutOfBounds()) {
-        this.powerups.splice(i, 1);
+        p.dead = true;
       }
     }
+    compactArray(this.powerups);
 
     this.checkCollisions();
+
+    // 当たり判定で dead になった分をまとめて取り除く
+    compactArray(this.lasers);
+    compactArray(this.enemies);
+    compactArray(this.powerups);
+
+    // HUD 更新はフレーム末に 1 回だけ (描画は 1 フレームに 1 度なので表示は同じ)
+    if (this.hudDirty) {
+      this.hudDirty = false;
+      this.updateHUD();
+    }
   }
 
   // --- HUD Updates ---
@@ -1662,30 +1729,28 @@ class Game {
     }
 
     // Draw particles (Thin out when clones >= 10 for performance)
+    let partStep = 1;
     if (this.player) {
-      if (this.player.clones >= 15) {
-        this.particles.forEach((p, i) => { if (i % 4 === 0) p.draw(this.ctx); });
-      } else if (this.player.clones >= 10) {
-        this.particles.forEach((p, i) => { if (i % 2 === 0) p.draw(this.ctx); });
-      } else {
-        this.particles.forEach(p => p.draw(this.ctx));
-      }
-    } else {
-      this.particles.forEach(p => p.draw(this.ctx));
+      if (this.player.clones >= 15) partStep = 4;
+      else if (this.player.clones >= 10) partStep = 2;
+    }
+    for (let i = 0; i < this.particles.length; i += partStep) {
+      this.particles[i].draw(this.ctx);
     }
     
     // Draw player lasers (Thin out when clones >= 10 for performance)
-    const pLasers = this.lasers.filter(l => l.isPlayer);
+    // filter() で毎フレーム配列を作らず、自機レーザーだけを数えながら 1 パスで描く
+    let pStep = 1;
     if (this.player) {
-      if (this.player.clones >= 15) {
-        pLasers.forEach((laser, i) => { if (i % 4 === 0) laser.draw(this.ctx); });
-      } else if (this.player.clones >= 10) {
-        pLasers.forEach((laser, i) => { if (i % 2 === 0) laser.draw(this.ctx); });
-      } else {
-        pLasers.forEach(laser => laser.draw(this.ctx));
-      }
-    } else {
-      pLasers.forEach(laser => laser.draw(this.ctx));
+      if (this.player.clones >= 15) pStep = 4;
+      else if (this.player.clones >= 10) pStep = 2;
+    }
+    let pIdx = 0;
+    for (let i = 0; i < this.lasers.length; i++) {
+      const laser = this.lasers[i];
+      if (!laser.isPlayer) continue;
+      if (pIdx % pStep === 0) laser.draw(this.ctx);
+      pIdx++;
     }
     
     // Draw powerups
@@ -1700,7 +1765,10 @@ class Game {
     }
     
     // Draw enemy lasers (Highest layer so they are never hidden by player lasers/clones)
-    this.lasers.filter(l => !l.isPlayer).forEach(laser => laser.draw(this.ctx));
+    for (let i = 0; i < this.lasers.length; i++) {
+      const laser = this.lasers[i];
+      if (!laser.isPlayer) laser.draw(this.ctx);
+    }
   }
 
   drawDemoParticles() {
