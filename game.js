@@ -230,6 +230,350 @@ const WEAPONS = [
 ];
 
 // --- Starfield Parallax Particles ---
+// ============================================================
+// WebGL 描画レイヤー
+// ------------------------------------------------------------
+// Canvas2D は線 1 本あたり数マイクロ秒の固定コストがあり、
+// 終盤の数千発を全部描くと 1 フレーム 100ms を超えてしまう。
+// 星・パーティクル・自機レーザーはいずれも「テクスチャを貼った四角形」なので、
+// まとめて 1 回の drawArrays で描けるよう WebGL に逃がす。
+// ============================================================
+
+const GL_VERT_SRC = [
+  'attribute vec2 aPos;',
+  'attribute vec2 aUV;',
+  'attribute vec4 aColor;',
+  'uniform vec2 uResolution;',
+  'varying vec2 vUV;',
+  'varying vec4 vColor;',
+  'void main() {',
+  '  vec2 clip = (aPos / uResolution) * 2.0 - 1.0;',
+  '  gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);',
+  '  vUV = aUV;',
+  '  vColor = aColor;',
+  '}',
+].join('\n');
+
+const GL_FRAG_SRC = [
+  'precision mediump float;',
+  'uniform sampler2D uTex;',
+  'varying vec2 vUV;',
+  'varying vec4 vColor;',
+  'void main() {',
+  '  gl_FragColor = texture2D(uTex, vUV) * vColor;',
+  '}',
+].join('\n');
+
+// --- アトラスの寸法 ---
+// テクスチャの明暗プロファイルが 2D 版と一致するよう、
+// 「描画サイズ(px)」と「テクセル数」の比を固定して作る。
+const GL_ATLAS_W = 512;
+const GL_ATLAS_H = 256;
+
+// レーザー: 芯 lineWidth 3 + shadowBlur 10 => 中心から左右 11.5px 広がる
+const GL_LASER_CORE_W = 3;
+const GL_LASER_BLUR = 10;
+const GL_LASER_LEN = 14;
+const GL_LASER_W_PX = GL_LASER_CORE_W / 2 + GL_LASER_BLUR;   // 11.5 (片側)
+const GL_LASER_HALF_W = GL_LASER_W_PX;
+const GL_LASER_EXT = GL_LASER_W_PX;                          // 端の張り出し
+const GL_LASER_TEX_W = 64;
+const GL_LASER_SCALE = GL_LASER_TEX_W / (GL_LASER_W_PX * 2); // texel / px
+const GL_LASER_TEX_H = Math.round((GL_LASER_LEN + GL_LASER_W_PX * 2) * GL_LASER_SCALE);
+const GL_LASER_X0 = 8, GL_LASER_Y0 = 8;
+
+// パーティクル: 半径 size の円 + shadowBlur size*2 => 中心から 3*size 広がる
+const GL_GLOW_TEX = 128;
+const GL_GLOW_SCALE = GL_GLOW_TEX / 6;   // 1 size あたりのテクセル数 (2r = 6*size)
+const GL_GLOW_X0 = 160, GL_GLOW_Y0 = 8;
+
+const GL_SOLID_X0 = 352, GL_SOLID_Y0 = 8, GL_SOLID_SIZE = 56;
+
+const GL_UV_LASER = {
+  u0: GL_LASER_X0 / GL_ATLAS_W, v0: GL_LASER_Y0 / GL_ATLAS_H,
+  u1: (GL_LASER_X0 + GL_LASER_TEX_W) / GL_ATLAS_W, v1: (GL_LASER_Y0 + GL_LASER_TEX_H) / GL_ATLAS_H,
+};
+const GL_UV_GLOW = {
+  u0: GL_GLOW_X0 / GL_ATLAS_W, v0: GL_GLOW_Y0 / GL_ATLAS_H,
+  u1: (GL_GLOW_X0 + GL_GLOW_TEX) / GL_ATLAS_W, v1: (GL_GLOW_Y0 + GL_GLOW_TEX) / GL_ATLAS_H,
+};
+const GL_UV_SOLID = {
+  u0: (GL_SOLID_X0 + 4) / GL_ATLAS_W, v0: (GL_SOLID_Y0 + 4) / GL_ATLAS_H,
+  u1: (GL_SOLID_X0 + GL_SOLID_SIZE - 4) / GL_ATLAS_W, v1: (GL_SOLID_Y0 + GL_SOLID_SIZE - 4) / GL_ATLAS_H,
+};
+
+const GL_COLOR_CACHE = new Map();
+// '#rrggbb' と 'rgba(r,g,b,a)' の両方を [r,g,b,a] (0..1) に変換して覚えておく
+function glParseColor(str) {
+  let c = GL_COLOR_CACHE.get(str);
+  if (c) return c;
+  let r = 255, g = 255, b = 255, a = 1;
+  const s = String(str).trim();
+  if (s[0] === '#') {
+    let h = s.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const num = parseInt(h, 16);
+    if (!Number.isNaN(num)) {
+      r = (num >> 16) & 255; g = (num >> 8) & 255; b = num & 255;
+    }
+  } else {
+    const m = s.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const parts = m[1].split(',');
+      r = parseFloat(parts[0]); g = parseFloat(parts[1]); b = parseFloat(parts[2]);
+      if (parts.length > 3) a = parseFloat(parts[3]);
+    }
+  }
+  c = [r / 255, g / 255, b / 255, a];
+  GL_COLOR_CACHE.set(str, c);
+  return c;
+}
+
+class GLLayer {
+  constructor(container, baseCanvas) {
+    this.ok = false;
+
+    const canvas = document.createElement('canvas');
+    canvas.id = 'gl-canvas';
+    canvas.width = LOGICAL_WIDTH;
+    canvas.height = LOGICAL_HEIGHT;
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0';
+    canvas.style.top = '0';
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+    canvas.style.zIndex = '0';
+
+    // 2D キャンバスを前面に固定する
+    baseCanvas.style.position = 'absolute';
+    baseCanvas.style.left = '0';
+    baseCanvas.style.top = '0';
+    baseCanvas.style.zIndex = '1';
+
+    container.insertBefore(canvas, baseCanvas);
+    this.canvas = canvas;
+
+    const opts = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false };
+    const gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+    if (!gl) {
+      canvas.remove();
+      return;
+    }
+    this.gl = gl;
+
+    const program = this.buildProgram(gl, GL_VERT_SRC, GL_FRAG_SRC);
+    if (!program) {
+      canvas.remove();
+      return;
+    }
+    this.program = program;
+    gl.useProgram(program);
+
+    this.aPos = gl.getAttribLocation(program, 'aPos');
+    this.aUV = gl.getAttribLocation(program, 'aUV');
+    this.aColor = gl.getAttribLocation(program, 'aColor');
+    this.uResolution = gl.getUniformLocation(program, 'uResolution');
+    this.uTex = gl.getUniformLocation(program, 'uTex');
+
+    this.buffer = gl.createBuffer();
+    this.texture = this.buildAtlas(gl);
+
+    // 頂点バッファ: 1 クアッド = 6 頂点 x 8 float
+    this.floatsPerVertex = 8;
+    this.floatsPerQuad = this.floatsPerVertex * 6;
+    this.capacity = 4096;
+    this.verts = new Float32Array(this.capacity * this.floatsPerQuad);
+    this.quadCount = 0;
+
+    gl.viewport(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    gl.uniform2f(this.uResolution, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    gl.uniform1i(this.uTex, 0);
+    gl.disable(gl.DEPTH_TEST);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0, 0, 0, 1);
+
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.ok = false; // 以降は 2D フォールバックに戻る
+    });
+
+    this.ok = true;
+  }
+
+  buildProgram(gl, vsSrc, fsSrc) {
+    const compile = (type, source) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, source);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+        gl.deleteShader(sh);
+        return null;
+      }
+      return sh;
+    };
+    const vs = compile(gl.VERTEX_SHADER, vsSrc);
+    const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+    if (!vs || !fs) return null;
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) return null;
+    return p;
+  }
+
+  // レーザー・グロー・単色をまとめた 1 枚のテクスチャを作る (色は頂点側で乗算する)
+  buildAtlas(gl) {
+    const c = document.createElement('canvas');
+    c.width = GL_ATLAS_W;
+    c.height = GL_ATLAS_H;
+    const x = c.getContext('2d');
+
+    // 1. レーザー: 2D 版の stroke をそのまま拡大して焼き込む
+    //    (lineWidth 3 + shadowBlur 10 + round cap を GL_LASER_SCALE 倍で描く)
+    x.save();
+    const lineLen = GL_LASER_LEN * GL_LASER_SCALE;
+    const lx = GL_LASER_X0 + GL_LASER_TEX_W / 2;
+    const ly0 = GL_LASER_Y0 + (GL_LASER_TEX_H - lineLen) / 2;
+    x.strokeStyle = '#ffffff';
+    x.lineCap = 'round';
+    x.shadowColor = '#ffffff';
+    x.shadowBlur = GL_LASER_BLUR * GL_LASER_SCALE;
+    x.lineWidth = GL_LASER_CORE_W * GL_LASER_SCALE;
+    x.beginPath();
+    x.moveTo(lx, ly0);
+    x.lineTo(lx, ly0 + lineLen);
+    x.stroke();
+    x.restore();
+
+    // 2. パーティクル: 2D 版の arc(size) + shadowBlur(size*2) を拡大して焼き込む
+    x.save();
+    const gcx = GL_GLOW_X0 + GL_GLOW_TEX / 2;
+    const gcy = GL_GLOW_Y0 + GL_GLOW_TEX / 2;
+    x.shadowColor = '#ffffff';
+    x.shadowBlur = 2 * GL_GLOW_SCALE;
+    x.fillStyle = '#ffffff';
+    x.beginPath();
+    x.arc(gcx, gcy, 1 * GL_GLOW_SCALE, 0, Math.PI * 2);
+    x.fill();
+    x.restore();
+
+    // 3. 星などに使う単色部分
+    x.fillStyle = '#ffffff';
+    x.fillRect(GL_SOLID_X0, GL_SOLID_Y0, GL_SOLID_SIZE, GL_SOLID_SIZE);
+
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, c);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return tex;
+  }
+
+  ensure(extraQuads) {
+    if (this.quadCount + extraQuads <= this.capacity) return;
+    let cap = this.capacity;
+    while (cap < this.quadCount + extraQuads) cap *= 2;
+    const next = new Float32Array(cap * this.floatsPerQuad);
+    next.set(this.verts.subarray(0, this.quadCount * this.floatsPerQuad));
+    this.verts = next;
+    this.capacity = cap;
+  }
+
+  // 任意の 4 点からなるクアッドを 2 三角形として積む
+  pushQuad(x0, y0, x1, y1, x2, y2, x3, y3, uv, r, g, b, a) {
+    const v = this.verts;
+    let o = this.quadCount * this.floatsPerQuad;
+    const u0 = uv.u0, v0 = uv.v0, u1 = uv.u1, v1 = uv.v1;
+    // (x0,y0)=左上 (x1,y1)=右上 (x2,y2)=右下 (x3,y3)=左下
+    v[o++] = x0; v[o++] = y0; v[o++] = u0; v[o++] = v0; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    v[o++] = x1; v[o++] = y1; v[o++] = u1; v[o++] = v0; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    v[o++] = x2; v[o++] = y2; v[o++] = u1; v[o++] = v1; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    v[o++] = x0; v[o++] = y0; v[o++] = u0; v[o++] = v0; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    v[o++] = x2; v[o++] = y2; v[o++] = u1; v[o++] = v1; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    v[o++] = x3; v[o++] = y3; v[o++] = u0; v[o++] = v1; v[o++] = r; v[o++] = g; v[o++] = b; v[o++] = a;
+    this.quadCount++;
+  }
+
+  beginFrame() {
+    this.quadCount = 0;
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+  }
+
+  pushStars(stars) {
+    this.ensure(stars.length);
+    for (let i = 0; i < stars.length; i++) {
+      const s = stars[i];
+      const col = glParseColor(s.color);
+      const w = s.size;
+      this.pushQuad(s.x, s.y, s.x + w, s.y, s.x + w, s.y + w, s.x, s.y + w,
+        GL_UV_SOLID, col[0], col[1], col[2], col[3]);
+    }
+  }
+
+  pushParticles(particles) {
+    this.ensure(particles.length);
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      if (p.alpha <= 0) continue;
+      const col = glParseColor(p.color);
+      const r = p.size * 3; // もとの円 + その 2 倍のにじみ
+      const x0 = p.x - r, y0 = p.y - r, x1 = p.x + r, y1 = p.y + r;
+      this.pushQuad(x0, y0, x1, y0, x1, y1, x0, y1,
+        GL_UV_GLOW, col[0], col[1], col[2], p.alpha);
+    }
+  }
+
+  // wantPlayer と一致するレーザーをすべて積む (間引きなし)
+  pushLasers(lasers, wantPlayer) {
+    this.ensure(lasers.length);
+    const hw = GL_LASER_HALF_W;
+    for (let i = 0; i < lasers.length; i++) {
+      const l = lasers[i];
+      if (l.isPlayer !== wantPlayer) continue;
+      const col = glParseColor(l.color);
+      const len = l.length || 14;
+      const dx = l.tdx / len, dy = l.tdy / len;   // 頭から尾への単位ベクトル
+      const px = -dy * hw, py = dx * hw;          // 垂直方向
+      const ex = dx * hw, ey = dy * hw;           // 端の丸み分の張り出し
+      const hx = l.x - ex, hy = l.y - ey;         // 頭
+      const tx = l.x + l.tdx + ex, ty = l.y + l.tdy + ey; // 尾
+      this.pushQuad(
+        hx + px, hy + py,
+        hx - px, hy - py,
+        tx - px, ty - py,
+        tx + px, ty + py,
+        GL_UV_LASER, col[0], col[1], col[2], col[3]
+      );
+    }
+  }
+
+  endFrame() {
+    const gl = this.gl;
+    if (this.quadCount === 0) return;
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, this.verts.subarray(0, this.quadCount * this.floatsPerQuad), gl.DYNAMIC_DRAW);
+
+    const stride = this.floatsPerVertex * 4;
+    gl.enableVertexAttribArray(this.aPos);
+    gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, stride, 0);
+    gl.enableVertexAttribArray(this.aUV);
+    gl.vertexAttribPointer(this.aUV, 2, gl.FLOAT, false, stride, 8);
+    gl.enableVertexAttribArray(this.aColor);
+    gl.vertexAttribPointer(this.aColor, 4, gl.FLOAT, false, stride, 16);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.texture);
+    gl.drawArrays(gl.TRIANGLES, 0, this.quadCount * 6);
+  }
+}
+
 class Starfield {
   constructor(canvas) {
     this.canvas = canvas;
@@ -487,6 +831,9 @@ class Laser {
     this.angle = angle;
     this.skipDraw = false;
     this.dead = false;
+    // 尾側の相対座標。角度はホーミング時以外変わらないので毎フレーム計算しない
+    this.tdx = -Math.sin(angle) * this.length;
+    this.tdy = Math.cos(angle) * this.length;
   }
 
   update(enemies = []) {
@@ -514,6 +861,8 @@ class Laser {
         const speed = Math.hypot(this.vx, this.vy);
         this.vx = Math.sin(this.angle) * speed;
         this.vy = -Math.cos(this.angle) * speed;
+        this.tdx = -Math.sin(this.angle) * this.length;
+        this.tdy = Math.cos(this.angle) * this.length;
       }
     }
     
@@ -533,7 +882,7 @@ class Laser {
     
     ctx.beginPath();
     ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x - Math.sin(this.angle) * this.length, this.y + Math.cos(this.angle) * this.length);
+    ctx.lineTo(this.x + this.tdx, this.y + this.tdy);
     ctx.stroke();
     ctx.restore();
   }
@@ -869,10 +1218,22 @@ class Game {
   constructor() {
     this.canvas = document.getElementById('game-canvas');
     this.ctx = this.canvas.getContext('2d');
-    
+
     // Virtual resolution
     this.canvas.width = LOGICAL_WIDTH;
     this.canvas.height = LOGICAL_HEIGHT;
+
+    // 背面の WebGL レイヤー。使えない環境では null のまま 2D 描画に戻る
+    this.glLayer = null;
+    try {
+      const container = this.canvas.parentNode;
+      if (container) {
+        const layer = new GLLayer(container, this.canvas);
+        if (layer.ok) this.glLayer = layer;
+      }
+    } catch (err) {
+      this.glLayer = null;
+    }
     
     this.starfield = new Starfield(this.canvas);
     this.player = null;
@@ -1249,11 +1610,11 @@ class Game {
 
       // Clone shooting
       const totalClones = this.player.clonePositions.length;
-      // Calculate a universal skip probability based on total clones
-      // Using power of 0.8 to handle up to 50+ clones safely.
-      // 1 clone: 0% skip, 10 clones: ~84% skip, 50 clones: ~95% skip
-      // This means even with 50 clones, the drawn bullet count equals roughly 2.2 clones' worth of bullets.
-      const skipProb = totalClones > 0 ? (1.0 - (1.0 / Math.pow(totalClones, 0.8))) : 0;
+      // WebGL レイヤーなら全弾そのまま描けるので描画スキップは設定しない。
+      // 2D フォールバック時のみ、従来どおりの間引き率を使う。
+      const skipProb = (this.glLayer && this.glLayer.ok) || totalClones === 0
+        ? 0
+        : (1.0 - (1.0 / Math.pow(totalClones, 0.8)));
       
       for (let c = 0; c < totalClones; c++) {
         const pos = this.player.clonePositions[c];
@@ -1714,74 +2075,93 @@ class Game {
   }
 
   // --- Rendering Loop ---
+  // 背面 (WebGL): 星 → パーティクル → 自機レーザー
+  // 前面 (2D)   : パワーアップ → 敵 → 自機 → 敵レーザー
+  // 重ね順は従来の 1 枚構成と同じ。
   draw() {
-    // Clear screen
-    this.ctx.fillStyle = '#000000';
-    this.ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+    const ctx = this.ctx;
+    const gl = (this.glLayer && this.glLayer.ok) ? this.glLayer : null;
 
-    // Draw Parallax Star Background
-    this.starfield.draw(this.ctx);
+    if (gl) {
+      ctx.clearRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+      gl.beginFrame();
+      gl.pushStars(this.starfield.stars);
+    } else {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT);
+      this.starfield.draw(ctx);
+    }
 
     if (this.state === GameState.START) {
-      // Draw idle demo objects or particles in background
-      this.drawDemoParticles();
+      this.updateDemoParticles();
+      if (gl) {
+        gl.pushParticles(this.particles);
+        gl.endFrame();
+      } else {
+        for (let i = 0; i < this.particles.length; i++) this.particles[i].draw(ctx);
+      }
       return;
     }
 
-    // Draw particles (Thin out when clones >= 10 for performance)
-    let partStep = 1;
-    if (this.player) {
-      if (this.player.clones >= 15) partStep = 4;
-      else if (this.player.clones >= 10) partStep = 2;
+    if (gl) {
+      // 全パーティクル・全自機レーザーを間引きなしで積む
+      gl.pushParticles(this.particles);
+      gl.pushLasers(this.lasers, true);
+      gl.endFrame();
+    } else {
+      // --- 2D フォールバック: 従来どおり間引いて描く ---
+      let partStep = 1;
+      if (this.player) {
+        if (this.player.clones >= 15) partStep = 4;
+        else if (this.player.clones >= 10) partStep = 2;
+      }
+      for (let i = 0; i < this.particles.length; i += partStep) {
+        this.particles[i].draw(ctx);
+      }
+
+      let pStep = 1;
+      if (this.player) {
+        if (this.player.clones >= 15) pStep = 4;
+        else if (this.player.clones >= 10) pStep = 2;
+      }
+      let pIdx = 0;
+      for (let i = 0; i < this.lasers.length; i++) {
+        const laser = this.lasers[i];
+        if (!laser.isPlayer) continue;
+        if (pIdx % pStep === 0) laser.draw(ctx);
+        pIdx++;
+      }
     }
-    for (let i = 0; i < this.particles.length; i += partStep) {
-      this.particles[i].draw(this.ctx);
-    }
-    
-    // Draw player lasers (Thin out when clones >= 10 for performance)
-    // filter() で毎フレーム配列を作らず、自機レーザーだけを数えながら 1 パスで描く
-    let pStep = 1;
-    if (this.player) {
-      if (this.player.clones >= 15) pStep = 4;
-      else if (this.player.clones >= 10) pStep = 2;
-    }
-    let pIdx = 0;
-    for (let i = 0; i < this.lasers.length; i++) {
-      const laser = this.lasers[i];
-      if (!laser.isPlayer) continue;
-      if (pIdx % pStep === 0) laser.draw(this.ctx);
-      pIdx++;
-    }
-    
+
     // Draw powerups
-    this.powerups.forEach(p => p.draw(this.ctx));
-    
+    this.powerups.forEach(p => p.draw(ctx));
+
     // Draw enemies
-    this.enemies.forEach(enemy => enemy.draw(this.ctx));
-    
+    this.enemies.forEach(enemy => enemy.draw(ctx));
+
     // Draw player
     if (this.player && this.state !== GameState.GAMEOVER) {
-      this.player.draw(this.ctx);
+      this.player.draw(ctx);
     }
-    
+
     // Draw enemy lasers (Highest layer so they are never hidden by player lasers/clones)
+    // 敵弾は多くても数百発なので 2D のまま前面に描く
     for (let i = 0; i < this.lasers.length; i++) {
       const laser = this.lasers[i];
-      if (!laser.isPlayer) laser.draw(this.ctx);
+      if (!laser.isPlayer) laser.draw(ctx);
     }
   }
 
-  drawDemoParticles() {
-    // Occasional neon sparks falling down when in menu mode
+  // タイトル画面の火の粉。更新だけ行い、描画は呼び出し側に任せる
+  updateDemoParticles() {
     if (Math.random() < 0.05) {
       const colors = ['#00f0ff', '#ff007f', '#00ff66', '#9d00ff'];
       const c = colors[Math.floor(Math.random() * colors.length)];
       this.particles.push(new GameParticle(Math.random() * LOGICAL_WIDTH, 0, c, 0.4));
     }
-    
+
     this.particles.forEach((part) => {
       part.update();
-      part.draw(this.ctx);
     });
     this.particles = this.particles.filter(p => p.alpha > 0);
   }
