@@ -217,6 +217,10 @@ const GameState = {
 };
 
 // Weapon Systems Config
+// 射出間隔の倍率。0.5 で発射間隔が半分 (= 連射速度 2 倍)
+// 各武器の cooldown(ms) にこの値を掛けたものが実際の発射間隔になる
+const SHOT_INTERVAL_SCALE = 0.5;
+
 const WEAPONS = [
   { name: 'SINGLE BEAM', color: '#00f0ff', count: 1, cooldown: 180 },
   { name: 'DUAL BEAMS', color: '#0072ff', count: 2, cooldown: 160 },
@@ -1581,7 +1585,7 @@ class Game {
       };
     }
     
-    if (now - this.lastShotTime >= config.cooldown) {
+    if (now - this.lastShotTime >= config.cooldown * SHOT_INTERVAL_SCALE) {
       sounds.playLaser();
       this.lastShotTime = now;
       
