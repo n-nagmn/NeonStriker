@@ -221,25 +221,6 @@ const GameState = {
 // 各武器の cooldown(ms) にこの値を掛けたものが実際の発射間隔になる
 const SHOT_INTERVAL_SCALE = 0.5;
 
-// HYPER PULSE を超えた武器レベル 1 つにつき増える発射弾数。固定上限なし。
-const BULLETS_PER_EXTRA_LEVEL = 2;
-
-// --- 発射弾数の自動上限 ---
-// 実測フレーム時間を見て「1 体あたりの発射弾数」の上限を上下させる。
-// 速いマシンでは際限なく伸び、遅いマシンではフレームが落ちる手前で止まる。
-const BULLET_CAP_MIN = 9;          // 下限 (HYPER PULSE の素の弾数)
-// 8ms 未満なら上げ、13ms 超なら下げる。あいだは不感帯として何もしない。
-// 撃った弾は 40 フレームほど残り続けるため負荷の反映が遅れる。
-// 不感帯を広めに取らないと上限が振動する。
-const BULLET_CAP_RAISE_CPU_MS = 8;
-const BULLET_CAP_DROP_CPU_MS = 13;
-// 実フレーム間隔で GPU 律速を検出する。60Hz の vsync は 16.7ms なので、
-// 18ms を超えたら上げ止め、19.5ms (約 51fps) を超えたら下げる。
-const BULLET_CAP_HOLD_FRAME_MS = 18;
-const BULLET_CAP_DROP_FRAME_MS = 19.5;
-const BULLET_CAP_RISE = 0.05;      // 1 フレームあたりの上げ幅 (約 3 発/秒)
-const BULLET_CAP_FALL = 0.15;      // 1 フレームあたりの下げ幅 (約 9 発/秒)
-
 const WEAPONS = [
   { name: 'SINGLE BEAM', color: '#00f0ff', count: 1, cooldown: 180 },
   { name: 'DUAL BEAMS', color: '#0072ff', count: 2, cooldown: 160 },
@@ -1267,11 +1248,6 @@ class Game {
     this.particles = [];
     this.powerups = [];
     this.hudDirty = false;
-    // 発射弾数の自動上限とフレーム時間の指数移動平均
-    this.bulletCap = BULLET_CAP_MIN;
-    this.frameCpuAvg = 0;
-    this.frameDeltaAvg = 1000 / 60;
-    this.lastFrameStart = 0;
     // クローン中心座標のキャッシュ (毎フレーム確保しないよう使い回す)
     this._cloneCx = new Float64Array(64);
     this._cloneCy = new Float64Array(64);
@@ -1604,15 +1580,7 @@ class Game {
       config = {
         name: `HYPER PULSE +${extraPower}`,
         color: base.color,
-        // 武器レベルが上がるほど 1 体あたりの発射弾数が増え続ける。
-        // 実際の値はフレーム時間から決まる自動上限 (bulletCap) で頭打ちになる。
-        count: Math.max(
-          base.count,
-          Math.min(
-            base.count + Math.floor(extraPower * BULLETS_PER_EXTRA_LEVEL),
-            Math.floor(this.bulletCap)
-          )
-        ),
+        count: base.count, // Caps at 5 bullets
         cooldown: Math.max(15, base.cooldown - extraPower * 5)
       };
     }
@@ -2203,40 +2171,9 @@ class Game {
   }
 
   gameLoop() {
-    const frameStart = performance.now();
-
-    // 実際に表示されたフレーム間隔 (vsync 込み)。GPU が苦しくなるとここが伸びる
-    if (this.lastFrameStart > 0) {
-      const delta = frameStart - this.lastFrameStart;
-      if (delta < 500) this.frameDeltaAvg += (delta - this.frameDeltaAvg) * 0.05;
-    }
-    this.lastFrameStart = frameStart;
-
     this.update();
     this.draw();
-
-    // update+draw の CPU 時間
-    const cpuMs = performance.now() - frameStart;
-    this.frameCpuAvg += (cpuMs - this.frameCpuAvg) * 0.05;
-    this.adjustBulletCap();
-
     requestAnimationFrame(() => this.gameLoop());
-  }
-
-  // フレーム時間に余裕があるうちは 1 体あたりの発射弾数の上限を上げ続け、
-  // 落ち始めたら素早く下げる。結果として、そのマシンの限界付近で落ち着く。
-  adjustBulletCap() {
-    if (this.state !== GameState.PLAYING) return;
-
-    const cpuBound = this.frameCpuAvg > BULLET_CAP_DROP_CPU_MS;
-    const gpuBound = this.frameDeltaAvg > BULLET_CAP_DROP_FRAME_MS && this.bulletCap > BULLET_CAP_MIN;
-
-    if (cpuBound || gpuBound) {
-      this.bulletCap = Math.max(BULLET_CAP_MIN, this.bulletCap - BULLET_CAP_FALL);
-    } else if (this.frameCpuAvg < BULLET_CAP_RAISE_CPU_MS && this.frameDeltaAvg < BULLET_CAP_HOLD_FRAME_MS) {
-      // CPU にも表示にも余裕があるあいだだけ上げ続ける
-      this.bulletCap += BULLET_CAP_RISE;
-    }
   }
 }
 
