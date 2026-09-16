@@ -221,6 +221,9 @@ const GameState = {
 // 各武器の cooldown(ms) にこの値を掛けたものが実際の発射間隔になる
 const SHOT_INTERVAL_SCALE = 0.5;
 
+// HYPER PULSE を超えた武器レベル 1 つにつき増える発射弾数。上限なし。
+const BULLETS_PER_EXTRA_LEVEL = 1;
+
 const WEAPONS = [
   { name: 'SINGLE BEAM', color: '#00f0ff', count: 1, cooldown: 180 },
   { name: 'DUAL BEAMS', color: '#0072ff', count: 2, cooldown: 160 },
@@ -1580,7 +1583,8 @@ class Game {
       config = {
         name: `HYPER PULSE +${extraPower}`,
         color: base.color,
-        count: base.count, // Caps at 5 bullets
+        // 武器レベルが上がるほど 1 体あたりの発射弾数が増え続ける (上限なし)
+        count: base.count + Math.floor(extraPower * BULLETS_PER_EXTRA_LEVEL),
         cooldown: Math.max(15, base.cooldown - extraPower * 5)
       };
     }
