@@ -689,6 +689,7 @@ class PlayerShip {
     this.invulnerable = 0; // Frames of invulnerability
     this.thrusterAnim = 0;
     this.hitCountForHoming = 0;
+    this.homing = 0; // Homing laser charge (0 = none)
   }
 
   resetPosition() {
@@ -1458,7 +1459,7 @@ class Game {
     this.score = 0;
     this.level = 1;
     this.enemiesKilled = 0;
-    this.enemiesNeededForLevel = 30;
+    this.enemiesNeededForLevel = 15 + this.level * 5; // 15+5*1=20（レベル1）
     this.bossSpawned = false;
     
     this.state = GameState.PLAYING;
@@ -1479,7 +1480,7 @@ class Game {
   }
 
   returnToTitle() {
-    this.state = GameState.MENU;
+    this.state = GameState.START;
     this.player = null;
     this.lasers = [];
     this.enemies = [];
@@ -1782,7 +1783,7 @@ class Game {
           this.particles.push(new GameParticle(laser.x, laser.y, '#b800ff', 1.5));
         }
         this.player.cloneHP = (this.player.cloneHP || (this.player.clones * 3)) - 1;
-        this.player.clones = Math.ceil(this.player.cloneHP / 3);
+        this.player.clones = Math.max(0, Math.ceil(this.player.cloneHP / 3));
         sounds.playExplosion('normal');
         continue;
       }
@@ -1835,7 +1836,7 @@ class Game {
           this.particles.push(new GameParticle(enemy.x, enemy.y, '#b800ff', 2.0));
         }
         this.player.cloneHP = (this.player.cloneHP || (this.player.clones * 3)) - 1;
-        this.player.clones = Math.ceil(this.player.cloneHP / 3);
+        this.player.clones = Math.max(0, Math.ceil(this.player.cloneHP / 3));
         sounds.playExplosion('normal');
         if (enemy.type !== 'boss') {
           enemy.dead = true;
