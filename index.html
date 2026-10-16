@@ -1,131 +1,813 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NEON STRIKER - Retro Cyberpunk Space Shooter</title>
-  <!-- Google Fonts for premium futuristic typography -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>NEON JUMP - 光の跳躍</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+        width: 100%; height: 100%;
+        overflow: hidden;
+        background: #05060f;
+        font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: manipulation;
+    }
+    #game { position: fixed; inset: 0; display: block; }
+    .ui {
+        position: fixed; color: #e8f6ff; z-index: 10; pointer-events: none;
+        text-shadow: 0 0 8px rgba(0,229,255,0.8), 0 0 20px rgba(0,229,255,0.4);
+    }
+    #score { top: 18px; left: 20px; font-size: 30px; font-weight: 800; letter-spacing: 2px; }
+    #combo {
+        top: 58px; left: 20px; font-size: 16px; font-weight: 600;
+        color: #ffd166; text-shadow: 0 0 8px rgba(255,209,102,0.8);
+        opacity: 0; transition: opacity 0.2s;
+    }
+    #hiscore { top: 18px; right: 20px; font-size: 15px; text-align: right; color: #9ad7ff; }
+    #djind {
+        bottom: 20px; left: 20px; z-index: 10; pointer-events: none;
+        font-size: 12px; font-weight: 700; letter-spacing: 1px;
+        color: #ff8ad8; text-shadow: 0 0 8px rgba(255,46,196,0.7);
+        opacity: 0; transition: opacity 0.15s;
+    }
+    #djind.ready { color: #6dff9e; text-shadow: 0 0 8px rgba(109,255,158,0.7); }
+
+    /* ランキング表示 (プレイ中・右上) */
+    #minirank {
+        top: 64px; right: 20px; z-index: 10; pointer-events: none;
+        font-size: 11px; line-height: 1.7; text-align: right;
+        color: #bfe9ff; text-shadow: 0 0 6px rgba(0,229,255,0.5);
+        background: rgba(6,10,26,0.5);
+        border: 1px solid rgba(0,229,255,0.25);
+        border-radius: 8px; padding: 6px 9px;
+        max-width: 190px;
+    }
+    #minirank .rk-head { color: #ffd166; font-weight: 700; margin-bottom: 2px; }
+    #minirank .rk-you { color: #6dff9e; font-weight: 700; }
+
+    .iconbtn {
+        pointer-events: auto; position: fixed; z-index: 30;
+        width: 44px; height: 44px; border-radius: 10px;
+        background: rgba(10,16,38,0.7); border: 1px solid rgba(0,229,255,0.4);
+        color: #9ad7ff; font-size: 20px; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+        text-shadow: 0 0 8px rgba(0,229,255,0.7);
+    }
+    #rankbtn { bottom: 18px; right: 18px; }
+    .iconbtn.off { opacity: 0.4; }
+    .iconbtn:active { transform: scale(0.94); }
+
+    .panel {
+        position: fixed; inset: 0; z-index: 20;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        background: rgba(4,6,18,0.78);
+        backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+        color: #e8f6ff; text-align: center; padding: 16px;
+        overflow-y: auto;
+    }
+    .panel h1 {
+        font-size: clamp(34px, 8vw, 64px); font-weight: 900; letter-spacing: 6px; margin-bottom: 10px;
+        background: linear-gradient(90deg, #00e5ff, #ff2ec4, #ffd166);
+        -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+        filter: drop-shadow(0 0 14px rgba(0,229,255,0.55));
+    }
+    .panel p { font-size: clamp(13px, 2.6vw, 17px); line-height: 1.9; color: #b9d4e8; margin-bottom: 6px; }
+    .panel .keys { margin-top: 12px; font-size: 13px; color: #7f9db5; }
+    .panel .keys kbd {
+        display: inline-block; border: 1px solid #3d5a75; border-radius: 6px; padding: 2px 9px; margin: 0 3px;
+        background: rgba(255,255,255,0.06); color: #cfe8ff; font-family: inherit;
+    }
+    .btn {
+        pointer-events: auto; margin-top: 20px; padding: 14px 42px;
+        font-size: 18px; font-weight: 800; letter-spacing: 3px; color: #04121c;
+        background: linear-gradient(90deg, #00e5ff, #66f0ff); border: none; border-radius: 999px; cursor: pointer;
+        box-shadow: 0 0 22px rgba(0,229,255,0.55), 0 0 60px rgba(0,229,255,0.2);
+        transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .btn:hover { transform: scale(1.05); box-shadow: 0 0 30px rgba(0,229,255,0.8), 0 0 80px rgba(0,229,255,0.3); }
+    .btn:active { transform: scale(0.97); }
+    .btn.ghost { background: linear-gradient(90deg, #ff2ec4, #ff8ad8); box-shadow: 0 0 22px rgba(255,46,196,0.5); }
+    .subbtn {
+        pointer-events: auto; margin-top: 10px; padding: 8px 20px; font-size: 13px; font-weight: 700;
+        color: #9ad7ff; background: transparent; border: 1px solid rgba(0,229,255,0.4); border-radius: 999px; cursor: pointer;
+    }
+    .subbtn:hover { background: rgba(0,229,255,0.1); }
+
+    #gameover .final { font-size: 24px; color: #ffd166; font-weight: 700; margin-top: 8px; }
+    #newrecord {
+        margin-top: 8px; font-size: 15px; font-weight: 800; color: #ff2ec4;
+        text-shadow: 0 0 12px rgba(255,46,196,0.8); animation: pulse 0.8s ease-in-out infinite alternate;
+    }
+    @keyframes pulse { from { opacity: 0.6; transform: scale(1); } to { opacity: 1; transform: scale(1.08); } }
+    .hidden { display: none !important; }
+
+    /* ランキングモーダル */
+    #rankmodal {
+        position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+        background: rgba(3,5,14,0.8); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    }
+    .rankbox {
+        width: min(440px, 92vw); max-height: 80vh; overflow-y: auto;
+        background: rgba(10,16,38,0.95); border: 1px solid rgba(0,229,255,0.4);
+        border-radius: 16px; padding: 22px; box-shadow: 0 0 40px rgba(0,229,255,0.3);
+    }
+    .rankbox h2 { font-size: 22px; letter-spacing: 3px; margin-bottom: 14px; color: #e8f6ff; text-align: center; text-shadow: 0 0 10px rgba(0,229,255,0.7); }
+    .rankrow {
+        display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px;
+        margin-bottom: 7px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+        font-size: 15px;
+    }
+    .rankrow .no { width: 30px; font-weight: 800; text-align: center; color: #9ad7ff; }
+    .rankrow .nm { flex: 1; color: #e8f6ff; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rankrow .sc { font-weight: 800; color: #ffd166; }
+    .rankrow.me { border-color: rgba(109,255,158,0.6); background: rgba(109,255,158,0.08); }
+    .rankrow.me .nm { color: #6dff9e; font-weight: 700; }
+    .rankrow .medal { font-size: 18px; }
+    .rankbox .close { display: block; margin: 14px auto 0; }
+    .empty { color: #7f9db5; text-align: center; padding: 20px; }
+
+    /* 名前入力 */
+    .namebox { margin-top: 16px; }
+    .namebox label { font-size: 13px; color: #7f9db5; display: block; margin-bottom: 6px; }
+    .namebox input {
+        padding: 10px 14px; font-size: 16px; width: 220px; text-align: center;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(0,229,255,0.4); border-radius: 10px;
+        color: #e8f6ff; outline: none;
+    }
+    .namebox input:focus { border-color: #00e5ff; box-shadow: 0 0 12px rgba(0,229,255,0.4); }
+</style>
 </head>
 <body>
-  <div id="game-container">
-    <!-- Game Canvas -->
-    <canvas id="game-canvas"></canvas>
+<canvas id="game"></canvas>
 
-    <!-- Heads Up Display (HUD) -->
-    <div id="hud" class="hidden">
-      <div class="hud-top">
-        <div class="hud-item-group">
-          <div class="hud-label">SCORE</div>
-          <div id="hud-score" class="hud-value neon-text-blue">000,000</div>
-        </div>
-        <div class="hud-item-group">
-          <div class="hud-label">LEVEL</div>
-          <div id="hud-level" class="hud-value neon-text-purple">1</div>
-        </div>
-        <div class="hud-item-group text-center">
-          <div class="hud-label">HOMING</div>
-          <div id="hud-homing" class="hud-value" style="color: #ffff00; text-shadow: 0 0 5px #ffff00, 0 0 10px #ffff00;">0</div>
-        </div>
-        <div class="hud-item-group text-right">
-          <div class="hud-label">LIVES</div>
-          <div id="hud-lives" class="hud-value neon-text-pink">♥♥♥</div>
-        </div>
-      </div>
-      
-      <div class="hud-bottom">
-        <div class="hud-weapon-status">
-          <div class="hud-label">WEAPON SYSTEM</div>
-          <div id="hud-weapon-name" class="hud-value-small">SINGLE LASER</div>
-          <div class="progress-bar-bg">
-            <div id="hud-weapon-bar" class="progress-bar-fill fill-blue" style="width: 25%"></div>
-          </div>
-        </div>
-        <div class="hud-shield-status">
-          <div class="hud-label">SHIELD ENERGY</div>
-          <div class="progress-bar-bg">
-            <div id="hud-shield-bar" class="progress-bar-fill fill-cyan" style="width: 100%"></div>
-          </div>
-        </div>
-      </div>
+<div class="ui" id="score">0 m</div>
+<div class="ui" id="combo"></div>
+<div class="ui" id="hiscore">BEST 0 m</div>
+<div class="ui" id="djind"></div>
+<div class="ui" id="minirank"></div>
+
+<button class="iconbtn" id="rankbtn" title="ランキング">🏆</button>
+
+<div class="panel" id="startpanel">
+    <h1>NEON JUMP</h1>
+    <p>光の壁を跳んで越え、ネオンの高さを狙え。</p>
+    <p>ランキング上位10人のゴーストと<b>同時プレイ</b>！</p>
+    <p class="keys"><kbd>スペース</kbd>/<kbd>↑</kbd>/タップ でジャンプ（<b>長押しで高く</b>）<br>空中でもう一度押すと<b>ダブルジャンプ</b>（クールタイムあり）</p>
+    <div class="namebox">
+        <label>プレイヤー名（ゴースト・ランキングに記録）</label>
+        <input type="text" id="nameinput" maxlength="20" placeholder="名無しランナー">
     </div>
+    <button class="btn" id="startbtn">START</button>
+    <button class="subbtn" id="menu-rank">🏆 ランキングを見る</button>
+</div>
 
-    <!-- Start Menu Screen -->
-    <div id="start-menu" class="menu-overlay">
-      <div class="menu-content glassmorphism">
-        <h1 class="game-title neon-text-pink-flicker">NEON<br><span class="neon-text-cyan">STRIKER</span></h1>
-        <p class="game-tagline">RETRO CYBERPUNK SPACE SHOOTER</p>
-        
-        <button id="btn-start" class="btn btn-primary neon-border-cyan">START MISSION</button>
-        
-        <div class="controls-guide">
-          <h3>CONTROLS</h3>
-          <div class="controls-grid">
-            <div class="control-key">Mouse / Touch</div>
-            <div>Move Ship</div>
-            <div class="control-key">Left Click / Auto</div>
-            <div>Shoot</div>
-            <div class="control-key">W / A / S / D or Arrow Keys</div>
-            <div>Alternative Movement</div>
-            <div class="control-key">SPACEBAR</div>
-            <div>Shoot (Keyboard controls)</div>
-          </div>
-        </div>
+<div class="panel hidden" id="gameover">
+    <h1 style="font-size: clamp(28px,6vw,48px)">GAME OVER</h1>
+    <p class="final" id="finalscore">0 m</p>
+    <p id="newrecord" class="hidden">NEW RECORD !</p>
+    <p id="yourrank" style="margin-top:8px;color:#9ad7ff;font-size:14px"></p>
+    <button class="btn" id="retrybtn">RETRY</button>
+    <button class="subbtn" id="over-rank">🏆 ランキングを見る</button>
+</div>
 
-        <div class="leaderboard-container">
-          <h3>TOP STRIKERS</h3>
-          <ol id="leaderboard-list">
-            <li><span class="rank-name">AAA</span> <span class="rank-score">50,000</span></li>
-            <li><span class="rank-name">BBB</span> <span class="rank-score">30,000</span></li>
-            <li><span class="rank-name">CCC</span> <span class="rank-score">10,000</span></li>
-          </ol>
-        </div>
-      </div>
+<div class="panel hidden" id="rankmodal">
+    <div class="rankbox">
+        <h2>🏆 RANKING</h2>
+        <div id="ranklist" class="empty">読み込み中...</div>
+        <button class="btn close" id="rankclose">CLOSE</button>
     </div>
+</div>
 
-    <!-- Pause Menu Screen -->
-    <div id="pause-menu" class="menu-overlay hidden">
-      <div class="menu-content glassmorphism">
-        <h2 class="menu-title neon-text-blue">SYSTEM PAUSED</h2>
-        <button id="btn-resume" class="btn btn-primary neon-border-blue">RESUME</button>
-        <button id="btn-restart-paused" class="btn btn-secondary">RESTART MISSION</button>
-        <button id="btn-return-title-paused" class="btn btn-secondary" style="margin-top: 15px;">RETURN TO TITLE</button>
-      </div>
-    </div>
+<script>
+'use strict';
+(function () {
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const scoreEl = document.getElementById('score');
+    const comboEl = document.getElementById('combo');
+    const hiscoreEl = document.getElementById('hiscore');
+    const miniRankEl = document.getElementById('minirank');
+    const startPanel = document.getElementById('startpanel');
+    const overPanel = document.getElementById('gameover');
+    const rankModal = document.getElementById('rankmodal');
+    const rankListEl = document.getElementById('ranklist');
+    const finalScoreEl = document.getElementById('finalscore');
+    const newRecordEl = document.getElementById('newrecord');
+    const yourRankEl = document.getElementById('yourrank');
+    const nameInput = document.getElementById('nameinput');
+    const djIndEl = document.getElementById('djind');
 
-    <!-- Game Over Screen -->
-    <div id="game-over-menu" class="menu-overlay hidden">
-      <div class="menu-content glassmorphism">
-        <h2 class="menu-title neon-text-pink">MISSION FAILED</h2>
-        
-        <div class="final-stats">
-          <div class="stat-group">
-            <div class="stat-label">FINAL SCORE</div>
-            <div id="go-score" class="stat-value neon-text-cyan">0</div>
-          </div>
-          <div class="stat-group">
-            <div class="stat-label">LEVEL REACHED</div>
-            <div id="go-level" class="stat-value neon-text-purple">1</div>
-          </div>
-        </div>
+    let W = 0, H = 0, DPR = 1;
+    function resize() {
+        DPR = Math.min(window.devicePixelRatio || 1, 2);
+        W = window.innerWidth; H = window.innerHeight;
+        canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
+        canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
-        <div id="high-score-form" class="hidden">
-          <p class="neon-text-green">NEW HIGH SCORE DETECTED!</p>
-          <div class="input-group">
-            <input type="text" id="player-name-input" maxlength="3" placeholder="AAA" autocomplete="off">
-            <button id="btn-submit-score" class="btn btn-primary neon-border-green">SUBMIT</button>
-          </div>
-        </div>
+    // --- プレイヤー名 ---
+    let playerName = '';
+    try { playerName = localStorage.getItem('neonjump_name') || ''; } catch (e) {}
+    nameInput.value = playerName;
+    function saveName() {
+        playerName = (nameInput.value || '').trim() || '名無しランナー';
+        try { localStorage.setItem('neonjump_name', playerName); } catch (e) {}
+    }
+    nameInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); saveName(); startGame(); }
+    });
 
-        <button id="btn-restart" class="btn btn-primary neon-border-pink">RETRY MISSION</button>
-        <button id="btn-return-title" class="btn btn-secondary" style="margin-top: 15px;">RETURN TO TITLE</button>
-      </div>
-    </div>
-  </div>
+    // --- 高スコア（ローカル） ---
+    let hiscore = 0;
+    try { hiscore = parseInt(localStorage.getItem('neonjump_hiscore'), 10) || 0; } catch (e) {}
+    hiscoreEl.textContent = 'BEST ' + hiscore + ' m';
 
-  <script src="game.js"></script>
+    // --- 定数 ---
+    const GROUND_OFFSET = 90;
+    const PLAYER_W = 34, PLAYER_H = 44;
+    const GRAVITY = 2600;
+    const JUMP_V_TAP = -700;    // タップ（短押し）ジャンプ速度
+    const JUMP_V_MAX = -1200;   // 長押し最大のジャンプ速度
+    const HOLD_RATE = 1200;     // 長押しで速度を上げる速度 (px/s^2)
+    const SCROLL_BASE = 330;
+    const SCROLL_PER_M = 4.2;
+    const MAX_SCROLL = 860;
+    const COYOTE = 0.09;
+    const BUFFER = 0.12;
+    const COMBO_MULT_MAX = 2.0;
+
+    // ダブルジャンプ
+    const DJ_V = -750;          // 2段目の基本速度
+    const DJ_HOLD_MAX = -1050;  // 2段目長押し最大の速度
+    const DJ_COOLDOWN = 0.9;    // ダブルジャンプのクールタイム（秒）
+
+    // --- ゴースト設定 ---
+    const GHOST_COLORS = ['#ff2ec4','#ffd166','#6dff9e','#4d9fff','#ff8a5c','#c07bff','#ffe14d','#4dd2ff','#ff5c8a','#9dff5c'];
+    let showGhosts = true;
+    try {
+        const g = localStorage.getItem('neonjump_ghost');
+        if (g !== null) showGhosts = (g === '1');
+    } catch (e) {}
+
+    // ゴーストデータ: {name, score, color, frames:[[d,y,vy],...], head:null}
+    let ghosts = [];
+    let ranking = [];
+    // 起動時 fetch: タイムアウトでゲーム起動をブロックしない
+    function fetchT(url, timeoutMs) {
+        const c = new AbortController();
+        const tid = setTimeout(() => c.abort(), timeoutMs || 3000);
+        return fetch(url, { signal: c.signal }).finally(() => clearTimeout(tid));
+    }
+
+    // --- 状態 ---
+    let state = 'menu';
+    let t = 0;
+    let player, platforms, particles, stars, scrollX, distance, combo, comboMult, shake;
+    let groundY;
+    let recFrames = [];
+    let recBaseX = 0;   // 録画開始時の scrollX（ゴースト用座標補正の基準）
+    let deathTime = 0;
+
+    function baseGroundY() { return H - GROUND_OFFSET; }
+
+    function reset() {
+        t = 0; scrollX = 0; distance = 0; combo = 0; comboMult = 1; shake = 0;
+        groundY = baseGroundY();
+        player = {
+            x: W * 0.28, y: 0, vy: 0, onGround: true, groundTime: 999,
+            coyote: 0, buffer: 0, hold: false, dead: false, squash: 1,
+            _airTime: 0, _wasAir: false, _comboCounted: false,
+            djUsed: false, djCd: 0
+        };
+        player.y = groundY - PLAYER_H;
+        platforms = [];
+        particles = [];
+        recFrames = [];
+        recBaseX = 0;
+        platforms.push({ x: -200, w: W * 0.9, y: groundY, type: 'ground', color: '#00e5ff' });
+        let cx = W * 0.9;
+        for (let i = 0; i < 14; i++) cx = nextPlatform(cx);
+        initStars();
+        // ゴーストのヘッドをリセット
+        for (const g of ghosts) { g.head = null; g.exhausted = false; }
+    }
+
+    function initStars() {
+        stars = [];
+        for (let i = 0; i < 70; i++) {
+            stars.push({ x: Math.random()*W, y: Math.random()*H*0.8, r: Math.random()*1.6+0.4, sp: Math.random()*30+10, tw: Math.random()*Math.PI*2 });
+        }
+    }
+
+    function speed() { return Math.min(SCROLL_BASE + distance/10*SCROLL_PER_M, MAX_SCROLL); }
+
+    function nextPlatform(prevX) {
+        const diff = Math.min(0.55 + distance/400, 0.85);
+        const minGap = 70, maxGap = 150 + Math.random()*160*diff;
+        const gap = minGap + Math.random()*(maxGap-minGap);
+        const x = prevX + gap;
+        const r = Math.random();
+        let y = groundY, type = 'ground', color = '#00e5ff';
+        if (r < 0.22 + diff*0.15) { type = 'high'; y = groundY - (70 + Math.random()*60*diff); color = '#ff2ec4'; }
+        else if (r < 0.4 + diff*0.2) { type = 'mid'; y = groundY - (36 + Math.random()*30*diff); color = '#ffd166'; }
+        else { type = 'gap'; }
+        const w = type === 'ground' ? 130 + Math.random()*150 : 90 + Math.random()*90;
+        const p = { x, w, y, type, color };
+        platforms.push(p);
+        return x + w;
+    }
+
+    // --- 入力 ---
+    function press() {
+        if (rankModal.classList.contains('hidden') === false) return;
+        if (state === 'menu') { saveName(); startGame(); return; }
+        if (state === 'dead') { if (t - deathTime > 0.5) startGame(); return; }
+        if (state === 'play') { player.buffer = BUFFER; player.hold = true; }
+    }
+    function release() { if (player) player.hold = false; }
+
+    window.addEventListener('keydown', e => {
+        if (e.target === nameInput) return;
+        if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') { e.preventDefault(); if (!e.repeat) press(); }
+        if (e.code === 'Escape') closeRankModal();
+    });
+    window.addEventListener('keyup', e => {
+        if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') release();
+    });
+    window.addEventListener('pointerdown', e => {
+        // UIボタン・入力欄・パネルクリック時はジャンプしない
+        if (e.target === canvas || e.target === startPanel || e.target === overPanel || e.target === rankModal ||
+            e.target.closest('.panel') || e.target.closest('.iconbtn') || e.target.closest('button') || e.target === nameInput) return;
+        e.preventDefault();
+        press();
+    });
+    window.addEventListener('pointerup', () => release());
+    window.addEventListener('pointercancel', () => release());
+    document.getElementById('startbtn').addEventListener('click', e => { e.stopPropagation(); saveName(); startGame(); });
+    document.getElementById('retrybtn').addEventListener('click', e => { e.stopPropagation(); startGame(); });
+    document.getElementById('menu-rank').addEventListener('click', e => { e.stopPropagation(); openRankModal(); });
+    document.getElementById('over-rank').addEventListener('click', e => { e.stopPropagation(); openRankModal(); });
+    document.getElementById('rankbtn').addEventListener('click', e => { e.stopPropagation(); openRankModal(); });
+    document.getElementById('rankclose').addEventListener('click', e => { e.stopPropagation(); closeRankModal(); });
+
+
+    function openRankModal() { rankModal.classList.remove('hidden'); loadRanking(true); }
+    function closeRankModal() { rankModal.classList.add('hidden'); }
+
+    function startGame() {
+        saveName();
+        reset();
+        state = 'play';
+        startPanel.classList.add('hidden');
+        overPanel.classList.add('hidden');
+        yourRankEl.textContent = '';
+    }
+
+    // --- 効果音 ---
+    let audioCtx = null;
+    function beep(freq, dur, type, vol) {
+        try {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = type || 'square'; o.frequency.value = freq;
+            g.gain.setValueAtTime(vol || 0.06, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+            o.connect(g).connect(audioCtx.destination);
+            o.start(); o.stop(audioCtx.currentTime + dur);
+        } catch (e) {}
+    }
+
+    function spawnParticles(x, y, color, n, power) {
+        for (let i = 0; i < n; i++) {
+            const a = Math.random()*Math.PI*2;
+            const v = (Math.random()*0.7+0.3)*power;
+            particles.push({ x, y, vx: Math.cos(a)*v, vy: Math.sin(a)*v-60, life: 1, decay: 1.5+Math.random()*1.5, r: Math.random()*3+1.5, color });
+        }
+    }
+
+    function die() {
+        state = 'dead'; deathTime = t; player.dead = true; shake = 14;
+        beep(140, 0.4, 'sawtooth', 0.09);
+        spawnParticles(player.x+PLAYER_W/2, player.y+PLAYER_H/2, '#00e5ff', 30, 420);
+        spawnParticles(player.x+PLAYER_W/2, player.y+PLAYER_H/2, '#ff2ec4', 20, 300);
+        const score = Math.floor(distance/10);
+        finalScoreEl.textContent = score + ' m';
+        if (score > hiscore) {
+            hiscore = score;
+            try { localStorage.setItem('neonjump_hiscore', String(hiscore)); } catch (e) {}
+            newRecordEl.classList.remove('hidden');
+        } else {
+            newRecordEl.classList.add('hidden');
+        }
+        hiscoreEl.textContent = 'BEST ' + hiscore + ' m';
+        // 録画フレームの scrollX を補正（スクロールした分だけ距離が短くなるため）
+        for (const fr of recFrames) { fr[0] += recBaseX; }
+        // サーバーに記録
+        submitRecord(score, recFrames);
+        setTimeout(() => { if (state === 'dead') { overPanel.classList.remove('hidden'); } }, 600);
+    }
+
+    // --- API ---
+    function submitRecord(score, frames) {
+        try {
+            fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'record', name: playerName, score: score })
+            }).catch(() => {});
+            // ゴーストは一定スコア以上かつフレーム数適正なら送信（軽量にするため5fps間隔で間引き）
+            if (score >= 5 && frames.length > 10) {
+                const stride = Math.max(1, Math.floor(frames.length / 3000)); // 最大3000フレーム
+                const thinned = [];
+                for (let i = 0; i < frames.length; i += stride) thinned.push(frames[i]);
+                fetch('api.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'ghost', name: playerName, score: score, frames: thinned })
+                }).catch(() => {});
+            }
+            // ランキング再取得（自分の順位表示）
+            setTimeout(() => loadRanking(false), 800);
+        } catch (e) {}
+    }
+
+    function loadRanking( showModal ) {
+        fetchT('api.php?action=rank&limit=10&with_ghosts=1', 3000)
+            .then(r => r.json())
+            .then(d => {
+                if (d.status !== 'success') return;
+                ranking = d.ranking || [];
+                // 現在のゴーストをランキング上位（ゴースト持ち）から構築
+                const withG = ranking.filter(r => r.ghost && r.ghost.length);
+                ghosts = withG.slice(0, 10).map((r, i) => ({
+                    name: r.name, score: r.score, color: GHOST_COLORS[i % GHOST_COLORS.length], frames: r.ghost, head: null
+                }));
+                // プレイ中はヘッドを現在距離にリセット
+                if (state === 'play') { for (const g of ghosts) { g.head = null; g.exhausted = false; } }
+                if (showModal) renderRankModal();
+                else updateMiniRank();
+            })
+            .catch(() => {
+                if (showModal) rankListEl.innerHTML = '<div class="empty">読み込みに失敗しました（3秒以内に応答なし）</div>';
+            });
+    }
+
+    function renderRankModal() {
+        if (!ranking.length) { rankListEl.innerHTML = '<div class="empty">まだランキングがありません。<br>あなたが1位になろう！</div>'; return; }
+        const medals = ['🥇','🥈','🥉'];
+        let html = '';
+        ranking.forEach((r, i) => {
+            const me = (r.name === playerName);
+            html += '<div class="rankrow' + (me ? ' me' : '') + '">'
+                + '<span class="no">' + (medals[i] || (i+1)) + '</span>'
+                + '<span class="nm">' + escapeHtml(r.name) + (me ? ' (あなた)' : '') + '</span>'
+                + '<span class="sc">' + r.score + ' m</span>'
+                + '</div>';
+        });
+        rankListEl.innerHTML = html;
+    }
+
+    function updateMiniRank() {
+        if (!ranking.length) { miniRankEl.innerHTML = ''; return; }
+        const medals = ['🥇','🥈','🥉'];
+        let html = '<div class="rk-head">TOP ' + Math.min(ranking.length,10) + '</div>';
+        ranking.slice(0,10).forEach((r, i) => {
+            const me = (r.name === playerName);
+            html += '<div class="' + (me ? 'rk-you' : '') + '">' + (medals[i] || (i+1)+'.') + ' '
+                + escapeHtml(r.name.slice(0,12)) + ' <b>' + r.score + '</b></div>';
+        });
+        miniRankEl.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // --- 更新 ---
+    function update(dt) {
+        t += dt;
+        for (const s of stars) {
+            s.x -= s.sp * dt * (state === 'play' ? 1.4 : 0.6);
+            s.tw += dt * 2;
+            if (s.x < -4) { s.x = W + 4; s.y = Math.random()*H*0.8; }
+        }
+        if (state !== 'play') return;
+
+        const p = player;
+        const sp = speed();
+        scrollX += sp * dt;
+        distance += sp * dt;
+
+        if (p.buffer > 0) p.buffer -= dt;
+        if (p.coyote > 0) p.coyote -= dt;
+        if (p.djCd > 0) p.djCd -= dt;
+
+        // --- ジャンプ実行 ---
+        // 死亡直後は入力を無視（デス画面をスキップ・二重リスポーン防止）
+        if (state === 'dead' && t - deathTime < 0.5) {
+            p.buffer = 0; p.hold = false;
+        }
+        const grounded = p.onGround || p.coyote > 0;
+        if (p.buffer > 0) {
+            if (grounded) {
+                // 1段目（地上ジャンプ）
+                p.buffer = 0; p.coyote = 0;
+                p.vy = JUMP_V_TAP; p.onGround = false;
+                p.djUsed = false;      // 空中で2段目可能
+                p.squash = 0.72;
+                beep(520 + Math.min(combo,12)*40, 0.09, 'square', 0.05);
+                spawnParticles(p.x+PLAYER_W/2, p.y+PLAYER_H, '#00e5ff', 8, 160);
+            } else if (!p.djUsed && p.djCd <= 0) {
+                // 2段目（ダブルジャンプ）
+                p.buffer = 0;
+                p.vy = DJ_V;
+                p.djUsed = true;
+                p.djCd = DJ_COOLDOWN;  // クールタイム開始
+                p.squash = 0.68;
+                beep(760, 0.08, 'square', 0.06);
+                spawnParticles(p.x+PLAYER_W/2, p.y+PLAYER_H, '#ff2ec4', 14, 220);
+            }
+            // 2段目が使えない（使用済み or クールタイム中）場合はバッファを残す
+        }
+
+        // --- 重力 ---
+        p.vy += GRAVITY * dt;
+
+        // 長押しでジャンプを高く（上向き速度の上限だけ下げる方式）
+        if (p.hold && p.vy < 0) {
+            if (p.djUsed) {
+                // 2段目: DJ_HOLD_MAX まで
+                if (p.vy < DJ_HOLD_MAX) p.vy = Math.max(p.vy, DJ_HOLD_MAX);
+            } else {
+                // 1段目: JUMP_V_MAX まで、HOLD_RATE で加速
+                p.vy -= HOLD_RATE * dt;
+                if (p.vy < JUMP_V_MAX) p.vy = JUMP_V_MAX;
+            }
+        }
+        p.y += p.vy * dt;
+
+        p.onGround = false;
+        for (const pl of platforms) {
+            const sx = pl.x - scrollX;
+            if (sx > W + 60 || sx + pl.w < -60) continue;
+            if (p.x + PLAYER_W > sx + 4 && p.x < sx + pl.w - 4) {
+                const feetPrev = p.y + PLAYER_H - p.vy * dt;
+                const feet = p.y + PLAYER_H;
+                if (p.vy >= 0 && feetPrev <= pl.y + 6 && feet >= pl.y) {
+                    p.y = pl.y - PLAYER_H;
+                    if (!p.onGround && p._airTime > 0.05) {
+                        p.squash = 1.28;
+                        spawnParticles(p.x+PLAYER_W/2, p.y+PLAYER_H, pl.color, 10, 200);
+                        beep(300, 0.05, 'triangle', 0.04);
+                    }
+                    p.vy = 0; p.onGround = true; p._airTime = 0; p._wasAir = false; p.groundTime += dt;
+                    p.coyote = 0;      // 着地でcoyoteを確定リセット（空中で更新される前に0へ）
+                    p.djUsed = false;  // 着地で2段目をリセット
+                }
+            }
+        }
+
+        if (!p.onGround) {
+            const wasAir = p._airTime > 0;
+            p._airTime += dt; p._wasAir = true; p.groundTime = 0;
+            // 着地直後の猶予（coyote time）: 空中に入った1フレーム目でセット
+            if (!wasAir) p.coyote = COYOTE;
+        } else {
+            p._airTime = 0;
+        }
+
+        if (p.onGround) {
+            for (const pl of platforms) {
+                const sx = pl.x - scrollX;
+                if (p.x + PLAYER_W/2 > sx && p.x + PLAYER_W/2 < sx + pl.w && Math.abs((p.y+PLAYER_H) - pl.y) < 4) {
+                    if (pl.type === 'high' || pl.type === 'mid') {
+                        if (p._airTime === 0 && !p._comboCounted) {
+                            combo++; comboMult = Math.min(1 + combo*0.1, COMBO_MULT_MAX); p._comboCounted = true;
+                            comboEl.textContent = 'COMBO x' + combo + '  (' + comboMult.toFixed(1) + ')';
+                            comboEl.style.opacity = 1;
+                            beep(660 + Math.min(combo,15)*50, 0.07, 'square', 0.05);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if (p.onGround && p.groundTime > 1.2) {
+            if (combo > 0) { combo = 0; comboMult = 1; comboEl.style.opacity = 0; }
+        }
+
+        distance += sp * dt * (comboMult - 1) * 0.35;
+
+        let lastX = -Infinity;
+        for (const pl of platforms) lastX = Math.max(lastX, pl.x + pl.w);
+        while (lastX - scrollX < W + 300) lastX = nextPlatform(lastX);
+        platforms = platforms.filter(pl => pl.x + pl.w - scrollX > -200);
+
+        // --- ゴースト更新 ---
+        updateGhosts();
+
+        if (p.y > H + 60) { die(); return; }
+
+        for (const pt of particles) {
+            pt.x += pt.vx*dt - sp*dt*0.4; pt.y += pt.vy*dt; pt.vy += 500*dt; pt.life -= pt.decay*dt;
+        }
+        particles = particles.filter(pt => pt.life > 0);
+
+        p.squash += (1 - p.squash) * Math.min(1, dt*14);
+        if (shake > 0) shake = Math.max(0, shake - dt*30);
+
+        // --- 記録フレーム ---
+        // y は地面基準（画面サイズ非依存）: player.y - groundY（上を負）
+        recFrames.push([Math.floor(distance), Math.round(player.y - groundY), Math.round(player.vy)]);
+        if (recFrames.length > 20000) recFrames.splice(0, recFrames.length - 20000);
+
+        scoreEl.textContent = Math.floor(distance/10) + ' m';
+
+        // --- ダブルジャンプ表示 ---
+        if (!p.onGround) {
+            if (p.djUsed) {
+                // クールタイム中
+                const pct = p.djCd / DJ_COOLDOWN;
+                djIndEl.textContent = 'DJ ' + Math.ceil(p.djCd * 10) / 10 + 's';
+                djIndEl.classList.remove('ready');
+                djIndEl.style.opacity = 1;
+                djIndEl.style.width = '';
+            } else {
+                // 使用中（まだ押してない）
+                djIndEl.textContent = 'DJ READY';
+                djIndEl.classList.add('ready');
+                djIndEl.style.opacity = 1;
+            }
+        } else {
+            djIndEl.style.opacity = 0;
+        }
+    }
+
+    function updateGhosts() {
+        for (const g of ghosts) {
+            if (!g.frames || g.frames.length < 2) { g.exhausted = true; continue; }
+            if (g.head === null) g.head = 0;
+            // frames の d が現在の distance を超えるまで前進
+            while (g.head < g.frames.length - 1 && g.frames[g.head+1][0] <= distance) {
+                g.head++;
+            }
+            // 録画が完全に終了（プレイヤー死亡）→ 表示を消す
+            const lastD = g.frames[g.frames.length - 1][0];
+            g.exhausted = (distance > lastD + 150);
+        }
+    }
+
+    function draw() {
+        const g = ctx.createLinearGradient(0,0,0,H);
+        g.addColorStop(0,'#05060f'); g.addColorStop(0.6,'#0a0e24'); g.addColorStop(1,'#141033');
+        ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+        ctx.save();
+        if (shake > 0) ctx.translate((Math.random()-0.5)*shake, (Math.random()-0.5)*shake);
+
+        for (const s of stars) {
+            const a = 0.4 + 0.6*Math.abs(Math.sin(s.tw));
+            ctx.fillStyle = 'rgba(200,235,255,' + (a*0.8).toFixed(3) + ')';
+            ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+        }
+
+        ctx.strokeStyle = 'rgba(0,229,255,0.07)'; ctx.lineWidth = 1;
+        const horizon = H * 0.55;
+        for (let i = 0; i < 12; i++) {
+            const yy = horizon + i*i*3.2; if (yy > H) break;
+            ctx.beginPath(); ctx.moveTo(0,yy); ctx.lineTo(W,yy); ctx.stroke();
+        }
+        const vSpacing = 90;
+        const vOff = -(scrollX*0.35) % vSpacing;
+        for (let x = vOff - vSpacing; x < W + vSpacing; x += vSpacing) {
+            ctx.beginPath(); ctx.moveTo(x,horizon); ctx.lineTo(x,H); ctx.stroke();
+        }
+
+        // 平台
+        for (const pl of platforms) {
+            const sx = pl.x - scrollX;
+            if (sx > W + 40 || sx + pl.w < -40) continue;
+            ctx.save();
+            ctx.shadowColor = pl.color; ctx.shadowBlur = 18;
+            ctx.fillStyle = pl.color;
+            const h = 14;
+            ctx.fillRect(sx, pl.y, pl.w, h);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = 'rgba(255,255,255,0.55)';
+            ctx.fillRect(sx, pl.y, pl.w, 3);
+            const grad = ctx.createLinearGradient(0, pl.y, 0, pl.y+120);
+            grad.addColorStop(0, hexToRgba(pl.color, 0.28)); grad.addColorStop(1, hexToRgba(pl.color, 0));
+            ctx.fillStyle = grad;
+            ctx.fillRect(sx + pl.w*0.1, pl.y+h, pl.w*0.8, 120);
+            ctx.restore();
+        }
+
+        // ゴースト
+        if (showGhosts) drawGhosts();
+
+        // プレイヤー
+        if (player) {
+            const p = player;
+            if (!p.dead || state !== 'dead' || (t - deathTime) < 0.1) {
+                ctx.save();
+                const cxp = p.x + PLAYER_W/2, cyp = p.y + PLAYER_H;
+                ctx.translate(cxp, cyp); ctx.scale(1/p.squash, p.squash); ctx.translate(-PLAYER_W/2, -PLAYER_H);
+                ctx.shadowColor = '#00e5ff'; ctx.shadowBlur = 22;
+                const bodyGrad = ctx.createLinearGradient(0,0,0,PLAYER_H);
+                bodyGrad.addColorStop(0,'#9ff3ff'); bodyGrad.addColorStop(1,'#00b3d4');
+                ctx.fillStyle = bodyGrad;
+                roundRect(ctx, 0,0,PLAYER_W,PLAYER_H,8); ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#04121c';
+                const look = p.vy < 0 ? -3 : (p.vy > 200 ? 3 : 0);
+                ctx.beginPath();
+                ctx.arc(PLAYER_W*0.32, PLAYER_H*0.38+look, 4.5, 0, Math.PI*2);
+                ctx.arc(PLAYER_W*0.68, PLAYER_H*0.38+look, 4.5, 0, Math.PI*2);
+                ctx.fill();
+                ctx.restore();
+                if (state === 'play' && Math.abs(p.vy) > 500) {
+                    ctx.strokeStyle = 'rgba(0,229,255,0.25)'; ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.moveTo(cxp, cyp-PLAYER_H); ctx.lineTo(cxp, cyp-PLAYER_H-Math.sign(p.vy)*26); ctx.stroke();
+                }
+            }
+        }
+
+        // パーティクル
+        for (const pt of particles) {
+            ctx.globalAlpha = Math.max(0, pt.life);
+            ctx.fillStyle = pt.color; ctx.shadowColor = pt.color; ctx.shadowBlur = 10;
+            ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI*2); ctx.fill();
+        }
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        ctx.restore();
+    }
+
+    function drawGhosts() {
+        if (!player) return;
+        for (const g of ghosts) {
+            if (g.exhausted) continue;
+            if (!g.frames || g.frames.length < 2 || g.head === null) continue;
+            const f = g.frames[g.head];
+            const gy = f[1];
+            // 現在位置に補間して滑らかに
+            const nextF = g.head < g.frames.length - 1 ? g.frames[g.head+1] : f;
+            const d0 = f[0], d1 = nextF[0];
+            const frac = (d1 > d0) ? Math.max(0, Math.min(1, (distance - d0)/(d1 - d0))) : 0;
+            // 地面基準値 → 画面座標へ変換
+            const iy = groundY + (f[1] + (nextF[1] - f[1]) * frac);
+            // ゴーストはプレイヤーの横に固定（距離差で上下だけ追従）
+            const gx = player.x;
+            // 画面外（大幅に落下した）ゴーストは描画しない
+            if (iy > H + 60 || iy < -60) continue;
+            ctx.save();
+            ctx.globalAlpha = 0.34;
+            ctx.shadowColor = g.color; ctx.shadowBlur = 16;
+            ctx.fillStyle = g.color;
+            roundRect(ctx, gx, iy, PLAYER_W, PLAYER_H, 8); ctx.fill();
+            // 名前ラベル
+            ctx.globalAlpha = 0.85; ctx.shadowBlur = 0;
+            ctx.fillStyle = g.color;
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            const label = g.name.length > 8 ? g.name.slice(0,8) + '…' : g.name;
+            ctx.fillText(label, gx + PLAYER_W/2, iy - 6);
+            ctx.restore();
+        }
+    }
+
+    function roundRect(c, x, y, w, h, r) {
+        c.beginPath(); c.moveTo(x+r,y);
+        c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r);
+        c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath();
+    }
+    function hexToRgba(hex, a) {
+        const h = hex.replace('#','');
+        const r = parseInt(h.substr(0,2),16), gg = parseInt(h.substr(2,2),16), b = parseInt(h.substr(4,2),16);
+        return 'rgba('+r+','+gg+','+b+','+a+')';
+    }
+
+    let last = performance.now();
+    function frame(now) {
+        let dt = (now - last)/1000; last = now;
+        if (dt > 0.05) dt = 0.05;
+        update(dt); draw();
+        requestAnimationFrame(frame);
+    }
+
+    // 起動
+    reset();
+    loadRanking(false); // プレイ前にランキング＆ゴースト取得
+    requestAnimationFrame(frame);
+})();
+</script>
 </body>
 </html>
