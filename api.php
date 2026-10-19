@@ -119,8 +119,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // スコア降順ソートして上位100保持
         usort($records, function($a, $b) { return $b['score'] - $a['score']; });
-        $records = array_slice($records, 0, 100);
-        write_json($records_file, $records);
+        $kept = array_slice($records, 0, 100);
+        // 切り落としたプレイヤーのゴーストも削除して整合性を保つ（ghost action と同じく）
+        $dropped = array_slice($records, 100);
+        if (count($dropped) > 0) {
+            $droppedNames = [];
+            foreach ($dropped as $r) {
+                $droppedNames[] = $r['name'];
+            }
+            $ghosts = read_json($ghosts_file, []);
+            $before = count($ghosts);
+            $ghosts = array_values(array_filter($ghosts, function($g) use ($droppedNames) {
+                return !in_array($g['name'] ?? '', $droppedNames, true);
+            }));
+            if (count($ghosts) !== $before) {
+                write_json($ghosts_file, $ghosts);
+            }
+        }
+        write_json($records_file, $kept);
         lock_off($fp);
         echo json_encode(['status' => 'success'], JSON_UNESCAPED_UNICODE);
         exit;
@@ -178,11 +194,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // スコア降順
         usort($ghosts, function($a, $b) { return $b['score'] - $a['score']; });
         // サイズ管理: 合計生サイズが大きいと末尾から削除
+        // O(n^2) の再エンコードを避けるため各エントリのサイズを事前計算し、合計を減算で管理
         $evicted = [];
-        while (count($ghosts) > 0) {
-            $size = strlen(json_encode($ghosts, JSON_UNESCAPED_UNICODE));
-            if ($size < 1500000) break;
-            $evicted[] = array_pop($ghosts)['name'];
+        if (count($ghosts) > 0) {
+            $encOpts = JSON_UNESCAPED_UNICODE;
+            $entrySizes = array_map(function($g) use ($encOpts) {
+                return strlen(json_encode($g, $encOpts));
+            }, $ghosts);
+            // 合計サイズ = "[]" + 区切り(",") 分 + 各エントリサイズ
+            $n = count($ghosts);
+            $totalSize = 2 + 2 * ($n - 1) + array_sum($entrySizes);
+            while (count($ghosts) > 0 && $totalSize >= 1500000) {
+                $lastSize = array_pop($entrySizes);
+                // 末尾エントリを削除すると 3(「, 」分) + エントリサイズ が減る
+                $totalSize -= 3 + $lastSize;
+                $evicted[] = array_pop($ghosts)['name'];
+            }
         }
         write_json($ghosts_file, $ghosts);
         // 破棄したゴーストのレコードも削除して整合性を保つ
