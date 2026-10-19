@@ -178,12 +178,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // スコア降順
         usort($ghosts, function($a, $b) { return $b['score'] - $a['score']; });
         // サイズ管理: 合計生サイズが大きいと末尾から削除
+        $evicted = [];
         while (count($ghosts) > 0) {
             $size = strlen(json_encode($ghosts, JSON_UNESCAPED_UNICODE));
             if ($size < 1500000) break;
-            array_pop($ghosts);
+            $evicted[] = array_pop($ghosts)['name'];
         }
         write_json($ghosts_file, $ghosts);
+        // 破棄したゴーストのレコードも削除して整合性を保つ
+        if (count($evicted) > 0) {
+            $records = read_json($records_file, []);
+            $before = count($records);
+            $records = array_values(array_filter($records, function($r) use ($evicted) {
+                return !in_array($r['name'] ?? '', $evicted, true);
+            }));
+            if (count($records) !== $before) {
+                write_json($records_file, $records);
+            }
+        }
         lock_off($fp);
         echo json_encode(['status' => 'success'], JSON_UNESCAPED_UNICODE);
         exit;
