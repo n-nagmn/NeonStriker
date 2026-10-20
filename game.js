@@ -2124,7 +2124,7 @@ class Game {
   // 背面 (WebGL): 星 → パーティクル → 自機レーザー
   // 前面 (2D)   : パワーアップ → 敵 → 自機 → 敵レーザー
   // 重ね順は従来の 1 枚構成と同じ。
-  draw() {
+  draw(dt = 1 / 60) {
     const ctx = this.ctx;
     const gl = (this.glLayer && this.glLayer.ok) ? this.glLayer : null;
 
@@ -2222,7 +2222,7 @@ class Game {
     const dt = Math.min(50, Math.max(0, dtMs)) / 1000;
 
     this.update(dt);
-    this.draw();
+    this.draw(dt);
     requestAnimationFrame((ts) => this.gameLoop(ts));
   }
 }
