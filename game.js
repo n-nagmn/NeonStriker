@@ -605,9 +605,9 @@ class Starfield {
     });
   }
 
-  update(dt = 1 / 60) {
+  update() {
     this.stars.forEach((star) => {
-      star.y += star.speed * 60 * dt;
+      star.y += star.speed;
       if (star.y > LOGICAL_HEIGHT) {
         star.y = 0;
         star.x = Math.random() * LOGICAL_WIDTH;
@@ -639,10 +639,10 @@ class GameParticle {
     this.dead = false;
   }
 
-  update(dt = 1 / 60) {
-    this.x += this.vx * 60 * dt;
-    this.y += this.vy * 60 * dt;
-    this.alpha -= this.decay * 60 * dt;
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.alpha -= this.decay;
   }
 
   draw(ctx) {
@@ -689,7 +689,6 @@ class PlayerShip {
     this.invulnerable = 0; // Frames of invulnerability
     this.thrusterAnim = 0;
     this.hitCountForHoming = 0;
-    this.homing = 0; // Homing laser charge (0 = none)
   }
 
   resetPosition() {
@@ -726,13 +725,11 @@ class PlayerShip {
     return false;
   }
 
-  update(dt = 1 / 60) {
+  update() {
     if (this.invulnerable > 0) {
-      this.invulnerable = Math.max(0, this.invulnerable - 60 * dt);
+      this.invulnerable--;
     }
-    // Thruster animation is keyed to frames; advance proportionally to dt
-    this.thrusterAnim += 60 * dt;
-    this.thrusterAnim %= 10;
+    this.thrusterAnim = (this.thrusterAnim + 1) % 10;
 
     // Sync clone array size
     while (this.clonePositions.length < this.clones) {
@@ -751,10 +748,8 @@ class PlayerShip {
     for (let i = 0; i < this.clonePositions.length; i++) {
       const targetX = leaderX;
       const targetY = leaderY + spacing;
-      // Frame-rate independent smoothing: keep the same 60fps feel for any dt
-      const follow = 1 - Math.pow(0.75, 60 * dt);
-      this.clonePositions[i].x += (targetX - this.clonePositions[i].x) * follow;
-      this.clonePositions[i].y += (targetY - this.clonePositions[i].y) * follow;
+      this.clonePositions[i].x += (targetX - this.clonePositions[i].x) * 0.25;
+      this.clonePositions[i].y += (targetY - this.clonePositions[i].y) * 0.25;
       leaderX = this.clonePositions[i].x;
       leaderY = this.clonePositions[i].y;
     }
@@ -845,7 +840,7 @@ class Laser {
     this.tdy = Math.cos(angle) * this.length;
   }
 
-  update(enemies = [], dt = 1 / 60) {
+  update(enemies = []) {
     // Only update homing every few frames based on an internal counter or random to save CPU
     if (this.isHoming && this.isPlayer && enemies.length > 0 && Math.random() < 0.3) {
       let nearestEnemy = null;
@@ -865,7 +860,7 @@ class Laser {
         const targetAngle = Math.atan2(nearestEnemy.x - this.x, -(nearestEnemy.y - this.y));
         const diff = targetAngle - this.angle;
         const normDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
-        this.angle += Math.sign(normDiff) * Math.min(Math.abs(normDiff), 0.15 * 60 * dt);
+        this.angle += Math.sign(normDiff) * Math.min(Math.abs(normDiff), 0.15);
         
         const speed = Math.hypot(this.vx, this.vy);
         this.vx = Math.sin(this.angle) * speed;
@@ -875,8 +870,8 @@ class Laser {
       }
     }
     
-    this.x += this.vx * 60 * dt;
-    this.y += this.vy * 60 * dt;
+    this.x += this.vx;
+    this.y += this.vy;
   }
 
   draw(ctx) {
@@ -919,7 +914,6 @@ class Enemy {
 
   initType(type, level, player) {
     switch (type) {
-      // NOTE: returns false below when no known type is provided
       case 'drone':
         this.size = 22;
         this.health = 2 + Math.floor(level * 2.0 + level * level * 0.5);
@@ -974,55 +968,26 @@ class Enemy {
         this.vy = 1.0; // Intial descent speed
         this.color = '#b800ff'; // Purple/Magenta neon
         this.scoreValue = 2500 + level * 500;
-        this.stuckTimer = 0; // Soft-lock detection (seconds without movement/damage)
-        this.lastHealthForStuckCheck = this.health;
         break;
     }
     this.maxHealth = this.health;
-    return this.type !== undefined; // false when no known enemy type was provided
   }
 
-  update(playerX, playerY, lasers, activeLasers, dt = 1 / 60) {
-    this.phase += 0.05 * 60 * dt;
+  update(playerX, playerY, lasers, activeLasers) {
+    this.phase += 0.05;
     
     if (this.type === 'boss') {
       // Boss movements
-      const prevX = this.x;
-      const prevY = this.y;
       if (this.y < 120) {
-        this.y += this.vy * 60 * dt; // Descend
+        this.y += this.vy; // Descend
       } else {
         // Hover and sway side to side
         this.x = LOGICAL_WIDTH / 2 + Math.sin(this.phase * 0.3) * (LOGICAL_WIDTH / 2 - 120);
         this.y = 120 + Math.cos(this.phase * 0.5) * 20;
       }
       
-      // --- Boss soft-lock detection ---
-      // If the boss is on screen (past its descent) but neither moves nor takes
-      // damage for 10 seconds (e.g. trapped in an unreachable position), reset
-      // its position back to the top of the arena so it re-enters the normal
-      // descent/hover cycle instead of soft-locking the fight.
-      if (this.y >= 100) {
-        const moved = Math.hypot(this.x - prevX, this.y - prevY) > 0.5;
-        const tookDamage = this.health < this.lastHealthForStuckCheck;
-        if (moved || tookDamage) {
-          this.stuckTimer = 0;
-          this.lastHealthForStuckCheck = this.health;
-        } else {
-          this.stuckTimer += dt;
-          if (this.stuckTimer >= 10) {
-            // Reset boss to a known-good starting position
-            this.x = LOGICAL_WIDTH / 2;
-            this.y = -100;
-            this.vy = 1.0;
-            this.stuckTimer = 0;
-            this.lastHealthForStuckCheck = this.health;
-          }
-        }
-      }
-
-      // Boss Shooting (frame count converted to seconds)
-      this.shootTimer -= 60 * dt;
+      // Boss Shooting
+      this.shootTimer--;
       if (this.shootTimer <= 0 && this.y >= 100) {
         sounds.playLaser();
         // Spray patterns based on level
@@ -1037,18 +1002,18 @@ class Enemy {
       }
     } else {
       // Normal enemies
-      this.y += this.vy * 60 * dt;
+      this.y += this.vy;
       
       if (this.type === 'speeder') {
         // Zigzag side-to-side
-        this.x += Math.sin(this.phase * 0.8) * 4.5 * 60 * dt;
+        this.x += Math.sin(this.phase * 0.8) * 4.5;
         // Clamp to stay on screen
         if (this.x < this.size) this.x = this.size;
         if (this.x > LOGICAL_WIDTH - this.size) this.x = LOGICAL_WIDTH - this.size;
       }
       
       if (this.type === 'tank' || this.type === 'blocker') {
-        this.shootTimer -= 60 * dt;
+        this.shootTimer--;
         if (this.shootTimer <= 0) {
           sounds.playLaser();
           // Aim slightly towards the player
@@ -1209,9 +1174,9 @@ class PowerUp {
     else if (type === 'homing') this.color = '#ffff00'; // Yellow
   }
 
-  update(dt = 1 / 60) {
-    this.y += this.vy * 60 * dt;
-    this.phase += 0.06 * 60 * dt;
+  update() {
+    this.y += this.vy;
+    this.phase += 0.06;
   }
 
   draw(ctx) {
@@ -1303,7 +1268,6 @@ class Game {
     
     // Settings & State
     this.state = GameState.START;
-    this.lastTimestamp = undefined; // Delta time tracking for the game loop
     
     // DOM Elements Cache
     this.hudElement = document.getElementById('hud');
@@ -1317,7 +1281,6 @@ class Game {
     
     this.startMenu = document.getElementById('start-menu');
     this.pauseMenu = document.getElementById('pause-menu');
-    this.pauseOverlay = document.getElementById('pause-overlay');
     this.gameOverMenu = document.getElementById('game-over-menu');
     this.goScore = document.getElementById('go-score');
     this.goLevel = document.getElementById('go-level');
@@ -1495,26 +1458,14 @@ class Game {
     this.score = 0;
     this.level = 1;
     this.enemiesKilled = 0;
-    this.enemiesNeededForLevel = 15 + this.level * 5; // 15+5*1=20（レベル1）
+    this.enemiesNeededForLevel = 30;
     this.bossSpawned = false;
-    // Put a visible opening wave on screen immediately. Random-only spawning
-    // can leave the arena looking empty just after the player starts.
-    this.enemies = [
-      new Enemy('drone', this.level, this.player),
-      new Enemy('drone', this.level, this.player)
-    ];
-    this.enemies[0].x = LOGICAL_WIDTH * 0.3;
-    this.enemies[0].y = LOGICAL_HEIGHT * 0.2;
-    this.enemies[1].x = LOGICAL_WIDTH * 0.7;
-    this.enemies[1].y = LOGICAL_HEIGHT * 0.27;
-    this.lastShotTime = 0; // Prevent the player from being unable to shoot after restart
-
+    
     this.state = GameState.PLAYING;
     
     // Update Menu Displays
     this.startMenu.classList.add('hidden');
     this.pauseMenu.classList.add('hidden');
-    this.pauseOverlay.classList.add('hidden');
     this.gameOverMenu.classList.add('hidden');
     this.hudElement.classList.remove('hidden');
     
@@ -1524,12 +1475,11 @@ class Game {
   pauseGame() {
     if (this.state !== GameState.PLAYING) return;
     this.state = GameState.PAUSED;
-    this.pauseOverlay.classList.remove('hidden');
     this.pauseMenu.classList.remove('hidden');
   }
 
   returnToTitle() {
-    this.state = GameState.START;
+    this.state = GameState.MENU;
     this.player = null;
     this.lasers = [];
     this.enemies = [];
@@ -1537,7 +1487,6 @@ class Game {
     this.powerups = [];
     this.startMenu.classList.remove('hidden');
     this.pauseMenu.classList.add('hidden');
-    this.pauseOverlay.classList.add('hidden');
     this.gameOverMenu.classList.add('hidden');
     this.hudElement.classList.add('hidden');
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -1547,7 +1496,6 @@ class Game {
     if (this.state !== GameState.PAUSED) return;
     sounds.resume();
     this.state = GameState.PLAYING;
-    this.pauseOverlay.classList.add('hidden');
     this.pauseMenu.classList.add('hidden');
   }
 
@@ -1834,7 +1782,7 @@ class Game {
           this.particles.push(new GameParticle(laser.x, laser.y, '#b800ff', 1.5));
         }
         this.player.cloneHP = (this.player.cloneHP || (this.player.clones * 3)) - 1;
-        this.player.clones = Math.max(0, Math.ceil(this.player.cloneHP / 3));
+        this.player.clones = Math.ceil(this.player.cloneHP / 3);
         sounds.playExplosion('normal');
         continue;
       }
@@ -1887,7 +1835,7 @@ class Game {
           this.particles.push(new GameParticle(enemy.x, enemy.y, '#b800ff', 2.0));
         }
         this.player.cloneHP = (this.player.cloneHP || (this.player.clones * 3)) - 1;
-        this.player.clones = Math.max(0, Math.ceil(this.player.cloneHP / 3));
+        this.player.clones = Math.ceil(this.player.cloneHP / 3);
         sounds.playExplosion('normal');
         if (enemy.type !== 'boss') {
           enemy.dead = true;
@@ -1981,12 +1929,12 @@ class Game {
   }
 
   // --- Real-time updates ---
-  update(dt = 1 / 60) {
-    this.starfield.update(dt);
+  update() {
+    this.starfield.update();
     
     if (this.state !== GameState.PLAYING) return;
     
-    this.player.update(dt);
+    this.player.update();
     
     // Keyboard inputs handling (W,A,S,D / Arrow Keys)
     let moveX = 0;
@@ -2000,15 +1948,15 @@ class Game {
     if (moveX !== 0 || moveY !== 0) {
       // Normalize direction vectors
       const len = Math.hypot(moveX, moveY);
-      this.player.x += (moveX / len) * PLAYER_SPEED * 60 * dt;
-      this.player.y += (moveY / len) * PLAYER_SPEED * 60 * dt;
+      this.player.x += (moveX / len) * PLAYER_SPEED;
+      this.player.y += (moveY / len) * PLAYER_SPEED;
     } else if (this.isMouseActive) {
-      // Smoothly slide player towards mouse/touch coordinate (frame-rate independent)
+      // Smoothly slide player towards mouse/touch coordinate
       const targetX = this.mouse.x - this.player.width / 2;
       const targetY = this.mouse.y - this.player.height / 2;
-      const follow = 1 - Math.pow(0.85, 60 * dt);
-      this.player.x += (targetX - this.player.x) * follow;
-      this.player.y += (targetY - this.player.y) * follow;
+      
+      this.player.x += (targetX - this.player.x) * 0.15;
+      this.player.y += (targetY - this.player.y) * 0.15;
     }
 
     // Keep Player Ship within Screen bounds
@@ -2023,7 +1971,7 @@ class Game {
     // Update Lasers (後ろから update するのは従来どおり。削除は後段で一括して詰める)
     for (let i = this.lasers.length - 1; i >= 0; i--) {
       const laser = this.lasers[i];
-      laser.update(this.enemies, dt);
+      laser.update(this.enemies);
       if (laser.isOutOfBounds()) {
         laser.dead = true;
       }
@@ -2034,7 +1982,7 @@ class Game {
     this.spawnEnemies();
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const enemy = this.enemies[i];
-      enemy.update(this.player.x + this.player.width / 2, this.player.y, this.lasers, this.lasers, dt);
+      enemy.update(this.player.x + this.player.width / 2, this.player.y, this.lasers, this.lasers);
       
       if (enemy.isOutOfBounds()) {
         enemy.dead = true;
@@ -2062,7 +2010,7 @@ class Game {
     // Update Particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const particle = this.particles[i];
-      particle.update(dt);
+      particle.update();
       if (particle.alpha <= 0) {
         particle.dead = true;
       }
@@ -2072,7 +2020,7 @@ class Game {
     // Update Powerups
     for (let i = this.powerups.length - 1; i >= 0; i--) {
       const p = this.powerups[i];
-      p.update(dt);
+      p.update();
       if (p.isOutOfBounds()) {
         p.dead = true;
       }
@@ -2134,7 +2082,7 @@ class Game {
   // 背面 (WebGL): 星 → パーティクル → 自機レーザー
   // 前面 (2D)   : パワーアップ → 敵 → 自機 → 敵レーザー
   // 重ね順は従来の 1 枚構成と同じ。
-  draw(dt = 1 / 60) {
+  draw() {
     const ctx = this.ctx;
     const gl = (this.glLayer && this.glLayer.ok) ? this.glLayer : null;
 
@@ -2149,7 +2097,7 @@ class Game {
     }
 
     if (this.state === GameState.START) {
-      this.updateDemoParticles(dt);
+      this.updateDemoParticles();
       if (gl) {
         gl.pushParticles(this.particles);
         gl.endFrame();
@@ -2209,31 +2157,23 @@ class Game {
   }
 
   // タイトル画面の火の粉。更新だけ行い、描画は呼び出し側に任せる
-  updateDemoParticles(dt = 1 / 60) {
-    if (Math.random() < 0.05 * 60 * dt) {
+  updateDemoParticles() {
+    if (Math.random() < 0.05) {
       const colors = ['#00f0ff', '#ff007f', '#00ff66', '#9d00ff'];
       const c = colors[Math.floor(Math.random() * colors.length)];
       this.particles.push(new GameParticle(Math.random() * LOGICAL_WIDTH, 0, c, 0.4));
     }
 
     this.particles.forEach((part) => {
-      part.update(dt);
+      part.update();
     });
     this.particles = this.particles.filter(p => p.alpha > 0);
   }
 
-  gameLoop(timestamp) {
-    // Delta time: seconds since the last frame.
-    // 初回 (lastTimestamp が未設定) と、タブがバックグラウンドから復帰した
-    // 大きな時間ギャップは、エンティティが一気にはねないように 50ms にクランプする。
-    if (this.lastTimestamp === undefined) this.lastTimestamp = timestamp;
-    const dtMs = timestamp - this.lastTimestamp;
-    this.lastTimestamp = timestamp;
-    const dt = Math.min(50, Math.max(0, dtMs)) / 1000;
-
-    this.update(dt);
-    this.draw(dt);
-    requestAnimationFrame((ts) => this.gameLoop(ts));
+  gameLoop() {
+    this.update();
+    this.draw();
+    requestAnimationFrame(() => this.gameLoop());
   }
 }
 
