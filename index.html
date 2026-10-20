@@ -436,7 +436,6 @@
                 const stride = Math.max(1, Math.floor(frames.length / 3000)); // 最大3000フレーム
                 const thinned = [];
                 for (let i = 0; i < frames.length; i += stride) thinned.push(frames[i]);
-                if (thinned[thinned.length-1] !== frames[frames.length-1]) thinned.push(frames[frames.length-1]);
                 fetch('api.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -459,16 +458,8 @@
                 ghosts = withG.slice(0, 10).map((r, i) => ({
                     name: r.name, score: r.score, color: GHOST_COLORS[i % GHOST_COLORS.length], frames: r.ghost, head: null
                 }));
-                // プレイ中はヘッドを現在の scrollX に一致するフレームから再開（null に戻すと描画が途切れる）
-                if (state === 'play') {
-                    for (const g of ghosts) {
-                        g.exhausted = false;
-                        g.head = 0;
-                        if (Array.isArray(g.frames) && g.frames.length >= 2) {
-                            while (g.head < g.frames.length - 1 && g.frames[g.head+1][0] <= scrollX) g.head++;
-                        }
-                    }
-                }
+                // プレイ中はヘッドを現在距離にリセット
+                if (state === 'play') { for (const g of ghosts) { g.head = null; g.exhausted = false; } }
                 if (showModal) renderRankModal();
                 else updateMiniRank();
             })
@@ -672,7 +663,7 @@
 
     function updateGhosts() {
         for (const g of ghosts) {
-            if (!Array.isArray(g.frames) || g.frames.length < 2 || !Array.isArray(g.frames[0]) || typeof g.frames[0][0] !== 'number') { g.exhausted = true; continue; }
+            if (!g.frames || g.frames.length < 2) { g.exhausted = true; continue; }
             if (g.head === null) g.head = 0;
             // frames の d が現在の scrollX を超えるまで前進
             while (g.head < g.frames.length - 1 && g.frames[g.head+1][0] <= scrollX) {
@@ -773,8 +764,7 @@
         if (!player) return;
         for (const g of ghosts) {
             if (g.exhausted) continue;
-            if (!Array.isArray(g.frames) || g.frames.length < 2 || !Array.isArray(g.frames[0]) || typeof g.frames[0][0] !== 'number') { g.exhausted = true; continue; }
-            if (g.head === null) continue;
+            if (!g.frames || g.frames.length < 2 || g.head === null) continue;
             const f = g.frames[g.head];
             const gy = f[1];
             // 現在位置に補間して滑らかに
