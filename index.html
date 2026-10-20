@@ -204,34 +204,12 @@
     const djIndEl = document.getElementById('djind');
 
     let W = 0, H = 0, DPR = 1;
-    // M6: 画面リサイズ時の補正に使う。
-    // playerRefY = 最後にリサイズ適用したときの groundY。
-    // リサイズ時に (baseGroundY() - playerRefY) の分だけ player.y と全 platform.y を並進させる。
-    let playerRefY = 0;
     function resize() {
         DPR = Math.min(window.devicePixelRatio || 1, 2);
         W = window.innerWidth; H = window.innerHeight;
         canvas.width = Math.floor(W * DPR); canvas.height = Math.floor(H * DPR);
-        canvas.style.width = W + 'px'; canvas.height = H + 'px';
+        canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
         ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-
-        // M6: プレイ中は地面を再計算し、プレイヤーと平台をデルタ分だけ並進させる。
-        // （groundY が H に依存するため、リサイズすると空中のプレイヤーが地面に沈んで
-        //  落下判定で即死するのを防ぐ）
-        if (state === 'play' && player) {
-            const newGroundY = baseGroundY();
-            const dy = newGroundY - playerRefY;
-            if (dy !== 0) {
-                player.y += dy;
-                for (const pl of platforms) pl.y += dy;
-            }
-            groundY = newGroundY;
-            playerRefY = newGroundY;
-            // 死亡判定のしきい値は H に依存するため、H が縮んだ場合は即チェック
-            if (player.y > H + 60) die();
-        } else {
-            playerRefY = baseGroundY();
-        }
     }
     window.addEventListener('resize', resize);
     resize();
@@ -315,24 +293,19 @@
         player = {
             x: W * 0.28, y: 0, vy: 0, onGround: true, groundTime: 999,
             coyote: 0, buffer: 0, hold: false, dead: false, squash: 1,
-            _airTime: 0, _wasAir: false, _comboCounted: false, _landType: null,
+            _airTime: 0, _wasAir: false, _comboCounted: false,
             djUsed: false, djCd: 0
         };
         player.y = groundY - PLAYER_H;
         platforms = [];
         particles = [];
         recFrames = [];
-        playerRefY = groundY;   // M6: リサイズ補正の基準
         platforms.push({ x: -200, w: W * 0.9, y: groundY, type: 'ground', color: '#00e5ff' });
         let cx = W * 0.9;
         for (let i = 0; i < 14; i++) cx = nextPlatform(cx);
         initStars();
         // ゴーストのヘッドをリセット
         for (const g of ghosts) { g.head = null; g.exhausted = false; }
-        // L4: リセット時にもコンボ表示を完全に隠す（opacity + テキスト）
-        combo = 0; comboMult = 1;
-        comboEl.style.opacity = 0;
-        comboEl.textContent = '';
     }
 
     function initStars() {
@@ -452,30 +425,27 @@
 
     // --- API ---
     function submitRecord(score, frames) {
-        // H3: 参照高さ = 記録時の地面Y（ref 基準で y を保存し、解像度非依存にする）
-        const ref = groundY;
-        const payload = { action: 'record', name: playerName, score: score };
-        // M5: record → ghost を直列化（並行 POST でサーバー側のロック/冷却が競合するのを防ぐ）
-        fetch('api.php', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        }).then(() => {
+        try {
+            fetch('api.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'record', name: playerName, score: score })
+            }).catch(() => {});
             // ゴーストは一定スコア以上かつフレーム数適正なら送信（軽量にするため5fps間隔で間引き）
             if (score >= 5 && frames.length >= 2) {
                 const stride = Math.max(1, Math.floor(frames.length / 3000)); // 最大3000フレーム
                 const thinned = [];
                 for (let i = 0; i < frames.length; i += stride) thinned.push(frames[i]);
                 if (thinned[thinned.length-1] !== frames[frames.length-1]) thinned.push(frames[frames.length-1]);
-                return fetch('api.php', {
+                fetch('api.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'ghost', name: playerName, score: score, frames: thinned, ref: ref })
-                });
+                    body: JSON.stringify({ action: 'ghost', name: playerName, score: score, frames: thinned })
+                }).catch(() => {});
             }
-        }).catch(() => {});
-        // ランキング再取得（自分の順位表示）
-        setTimeout(() => loadRanking(false), 800);
+            // ランキング再取得（自分の順位表示）
+            setTimeout(() => loadRanking(false), 800);
+        } catch (e) {}
     }
 
     function loadRanking( showModal ) {
@@ -487,8 +457,7 @@
                 // 現在のゴーストをランキング上位（ゴースト持ち）から構築
                 const withG = ranking.filter(r => r.ghost && r.ghost.length);
                 ghosts = withG.slice(0, 10).map((r, i) => ({
-                    name: r.name, score: r.score, color: GHOST_COLORS[i % GHOST_COLORS.length],
-                    frames: r.ghost, ref: (typeof r.ref === 'number') ? r.ref : 0, head: null
+                    name: r.name, score: r.score, color: GHOST_COLORS[i % GHOST_COLORS.length], frames: r.ghost, head: null
                 }));
                 // プレイ中はヘッドを現在の scrollX に一致するフレームから再開（null に戻すと描画が途切れる）
                 if (state === 'play') {
@@ -517,7 +486,7 @@
             html += '<div class="rankrow' + (me ? ' me' : '') + '">'
                 + '<span class="no">' + (medals[i] || (i+1)) + '</span>'
                 + '<span class="nm">' + escapeHtml(r.name) + (me ? ' (あなた)' : '') + '</span>'
-                + '<span class="sc">' + escapeHtml(r.score) + ' m</span>'
+                + '<span class="sc">' + r.score + ' m</span>'
                 + '</div>';
         });
         rankListEl.innerHTML = html;
@@ -569,9 +538,7 @@
                 // 1段目（地上ジャンプ）
                 p.buffer = 0; p.coyote = 0;
                 p.vy = JUMP_V_TAP; p.onGround = false;
-                // M3: coyote ジャンプ（落下直後の猶予）は空中ジャンプと同等に扱う。
-                // 地上から跳ねた場合のみ djUsed をリセット（空中で2段目可能）
-                p.djUsed = p.djUsed && !p.onGround;
+                p.djUsed = false;      // 空中で2段目可能
                 p.squash = 0.72;
                 beep(520 + Math.min(combo,12)*40, 0.09, 'square', 0.05);
                 spawnParticles(p.x+PLAYER_W/2, p.y+PLAYER_H, '#00e5ff', 8, 160);
@@ -640,27 +607,20 @@
             for (const pl of platforms) {
                 const sx = pl.x - scrollX;
                 if (p.x + PLAYER_W/2 > sx && p.x + PLAYER_W/2 < sx + pl.w && Math.abs((p.y+PLAYER_H) - pl.y) < 4) {
-                    // M2: 現在の高さ型と前回の着地型をともに high/mid でなければコンボしない
                     if (pl.type === 'high' || pl.type === 'mid') {
-                        if (p._airTime === 0 && !p._comboCounted &&
-                            (p._landType === 'high' || p._landType === 'mid')) {
+                        if (p._airTime === 0 && !p._comboCounted) {
                             combo++; comboMult = Math.min(1 + combo*0.1, COMBO_MULT_MAX); p._comboCounted = true;
                             comboEl.textContent = 'COMBO x' + combo + '  (' + comboMult.toFixed(1) + ')';
                             comboEl.style.opacity = 1;
                             beep(660 + Math.min(combo,15)*50, 0.07, 'square', 0.05);
                         }
                     }
-                    p._landType = pl.type;
                     break;
                 }
             }
         }
         if (p.onGround && p.groundTime > 1.2) {
-            if (combo > 0) {
-                combo = 0; comboMult = 1;
-                p._landType = null;
-                comboEl.style.opacity = 0;
-            }
+            if (combo > 0) { combo = 0; comboMult = 1; comboEl.style.opacity = 0; }
         }
 
         distance += sp * dt * (comboMult - 1) * 0.35;
@@ -816,13 +776,13 @@
             if (!Array.isArray(g.frames) || g.frames.length < 2 || !Array.isArray(g.frames[0]) || typeof g.frames[0][0] !== 'number') { g.exhausted = true; continue; }
             if (g.head === null) continue;
             const f = g.frames[g.head];
+            const gy = f[1];
             // 現在位置に補間して滑らかに
             const nextF = g.head < g.frames.length - 1 ? g.frames[g.head+1] : f;
             const d0 = f[0], d1 = nextF[0];
             const frac = (d1 > d0) ? Math.max(0, Math.min(1, (scrollX - d0)/(d1 - d0))) : 0;
-            // H3: 画面座標は記録時の参照高さ (g.ref) 基準で保存されている。
-            // 再生時は その ref から現在の groundY への差だけオフセットする（解像度非依存）
-            const iy = groundY + (g.ref || 0) + (f[1] + (nextF[1] - f[1]) * frac);
+            // 地面基準値 → 画面座標へ変換
+            const iy = groundY + (f[1] + (nextF[1] - f[1]) * frac);
             // ゴーストはプレイヤーの横に固定（距離差で上下だけ追従）
             const gx = player.x;
             // 画面外（大幅に落下した）ゴーストは描画しない

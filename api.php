@@ -25,73 +25,25 @@ $records_file = $base . '/records.json';
 $ghosts_file  = $base . '/ghosts.json';
 $lock_file    = $base . '/neonjump.lock';
 
-// 入力ボディのサイズ上限（約2MB）。json_decode 前にチェックする
-const MAX_BODY_SIZE = 2 * 1024 * 1024;
-
-// read_json に渡すバリデータ: 必須キーを満たさないエントリを除外する
-function validate_records($d) {
-    if (!is_array($d)) return [];
-    $out = [];
-    foreach ($d as $r) {
-        if (is_array($r) && isset($r['name'], $r['score']) && is_string($r['name']) && $r['name'] !== '') {
-            $out[] = $r;
-        }
-    }
-    return $out;
-}
-function validate_ghosts($d) {
-    if (!is_array($d)) return [];
-    $out = [];
-    foreach ($d as $g) {
-        if (is_array($g) && isset($g['name'], $g['score'], $g['frames']) && is_string($g['name']) && $g['name'] !== '' && is_array($g['frames'])) {
-            $out[] = $g;
-        }
-    }
-    return $out;
-}
-
-function read_json($path, $default, $validator = null) {
+function read_json($path, $default) {
     if (file_exists($path)) {
         $raw = file_get_contents($path);
-        if ($raw !== false && $raw !== '' && strlen($raw) <= MAX_BODY_SIZE) {
-            $d = json_decode($raw, true);
-            if (is_array($d)) {
-                return $validator ? $validator($d) : $d;
-            }
-        }
+        $d = json_decode($raw, true);
+        if (is_array($d)) return $d;
     }
     return $default;
 }
 
 function write_json($path, $data) {
     $enc = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    if ($enc === false) {
-        // エンコード失敗: ターゲットファイルを一切変更しない
-        return false;
-    }
     $tmp = $path . '.tmp';
     if (@file_put_contents($tmp, $enc) !== false) {
-        // リネーム前にテンポラリが正常に書き込まれているか確認
-        $sz = @filesize($tmp);
-        if ($sz === false || $sz <= 0) {
-            @unlink($tmp);
-            return false;
-        }
         @chmod($tmp, 0666);
-        if (!@rename($tmp, $path)) {
-            @unlink($tmp);
-            return false;
-        }
+        @rename($tmp, $path);
         return true;
     }
     @unlink($tmp);
     return false;
-}
-
-function fail_500($msg) {
-    http_response_code(500);
-    echo json_encode(['status' => 'error', 'message' => $msg], JSON_UNESCAPED_UNICODE);
-    exit;
 }
 
 function lock_on() {
@@ -116,38 +68,12 @@ function lock_off(&$fp) {
 }
 
 function clean_name($s) {
-    $s = is_string($s) ? $s : '';
-    // 制御文字・C0/C1・DEL を除去（innerHTML 注入・ログ改行防止）
-    $s = preg_replace('/[\x00-\x1F\x7F\x{0080}-\x{009F}]/u', '', $s);
-    $s = trim($s);
+    $s = is_string($s) ? trim($s) : '';
     $s = mb_substr($s, 0, 20, 'UTF-8');
     return $s === '' ? '名無しランナー' : $s;
 }
 
-// --- per-name 送信クールダウン（連打・リプレイアブルな POST を抑制） ---
-const POST_COOLDOWN_SEC = 2;
-function cooldown_ok($name, $ttl) {
-    global $base;
-    $key_file = $base . '/cd_' . substr(md5($name), 0, 16) . '.lock';
-    $now = time();
-    if (file_exists($key_file)) {
-        $m = @filemtime($key_file);
-        if ($m !== false && ($now - $m) < $ttl) {
-            return false;
-        }
-    }
-    $fp = @fopen($key_file, 'c');
-    if ($fp) { @chmod($key_file, 0666); fclose($fp); }
-    return true;
-}
-
 $raw_input = file_get_contents('php://input');
-// H5: ボディサイズ上限を json_decode より前にチェック
-if ($raw_input === false || strlen($raw_input) > MAX_BODY_SIZE) {
-    http_response_code(413);
-    echo json_encode(['status' => 'error', 'message' => 'payload too large'], JSON_UNESCAPED_UNICODE);
-    exit;
-}
 $decoded = json_decode($raw_input, true);
 if (!is_array($decoded)) {
     $decoded = [];
@@ -173,18 +99,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['status' => 'error', 'message' => 'invalid score'], JSON_UNESCAPED_UNICODE);
             exit;
         }
-        // H5: 同名のクールダウン中は更新をスキップ（データは変更しない）
-        if (!cooldown_ok($name, POST_COOLDOWN_SEC)) {
-            echo json_encode(['status' => 'success', 'skipped' => 'cooldown'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
         $fp = lock_on();
-        $records = read_json($records_file, [], 'validate_records');
+        $records = read_json($records_file, []);
         // 同名ならスコアが上なら更新、下なら無視
         $found = false;
         foreach ($records as &$r) {
-            if (($r['name'] ?? '') === $name) {
-                if ($score > intval($r['score'] ?? 0)) {
+            if ($r['name'] === $name) {
+                if ($score > intval($r['score'])) {
                     $r['score'] = $score;
                     $r['ts'] = time();
                 }
@@ -197,14 +118,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $records[] = ['name' => $name, 'score' => $score, 'ts' => time()];
         }
         // スコア降順ソートして上位100保持
-        usort($records, function($a, $b) { return intval($b['score'] ?? 0) - intval($a['score'] ?? 0); });
+        usort($records, function($a, $b) { return $b['score'] - $a['score']; });
         $kept = array_slice($records, 0, 100);
-        // H2: レコードとゴーストは独立したストアとして扱う。
-        // レコードの排出時にゴーストを削除しない（データ削除の禁止）。
-        if (!write_json($records_file, $kept)) {
-            lock_off($fp);
-            fail_500('failed to save record');
+        // 切り落としたプレイヤーのゴーストも削除して整合性を保つ（ghost action と同じく）
+        $dropped = array_slice($records, 100);
+        if (count($dropped) > 0) {
+            $droppedNames = [];
+            foreach ($dropped as $r) {
+                $droppedNames[] = $r['name'];
+            }
+            $ghosts = read_json($ghosts_file, []);
+            $before = count($ghosts);
+            $ghosts = array_values(array_filter($ghosts, function($g) use ($droppedNames) {
+                return !in_array($g['name'] ?? '', $droppedNames, true);
+            }));
+            if (count($ghosts) !== $before) {
+                write_json($ghosts_file, $ghosts);
+            }
         }
+        write_json($records_file, $kept);
         lock_off($fp);
         echo json_encode(['status' => 'success'], JSON_UNESCAPED_UNICODE);
         exit;
@@ -224,20 +156,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['status' => 'error', 'message' => 'invalid score'], JSON_UNESCAPED_UNICODE);
             exit;
         }
-        // H5: 同名のクールダウン中は更新をスキップ（データは変更しない）
-        if (!cooldown_ok($name, POST_COOLDOWN_SEC)) {
-            echo json_encode(['status' => 'success', 'skipped' => 'cooldown'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        // H3: 参照高さ (ref, px) を必須化。y は ref 基準の画面座標 (上を負) で保存し、
-        // 再生時は記録された ref を使って再現する（解像度非依存）
-        $ref = isset($decoded['ref']) ? intval($decoded['ref']) : 0;
-        if ($ref < 0 || $ref > 100000) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'invalid ref'], JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-        // フレーム整形: [d(距離mm相当), y(ref基準の画面座標), vy] の配列のみ保持
+        // フレーム整形: [d(距離mm相当), y(画面座標), vy] の配列のみ保持
         $clean = [];
         foreach ($frames as $f) {
             if (is_array($f) && count($f) >= 3) {
@@ -255,29 +174,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // サイズ上限(約1.5MB生JSON)なら古い順に破棄
         $fp = lock_on();
-        $ghosts = read_json($ghosts_file, [], 'validate_ghosts');
-        // 同名ならスコアが上の場合のみ上書き
+        $ghosts = read_json($ghosts_file, []);
+        // 同名ならスコアが上の場合のみ上書き（ランキングとゴーストの整合性を保つ）
         $exists = false;
-        foreach ($ghosts as &$g) {
-            if (($g['name'] ?? '') === $name) {
-                if ($score > intval($g['score'] ?? 0)) {
+        foreach ($ghosts as $g) {
+            if ($g['name'] === $name) {
+                if ($score > intval($g['score'])) {
                     $g['score'] = $score;
                     $g['ts'] = time();
                     $g['frames'] = $clean;
-                    $g['ref'] = $ref;
                 }
                 $exists = true;
                 break;
             }
         }
-        unset($g);
         if (!$exists) {
-            $ghosts[] = ['name' => $name, 'score' => $score, 'ts' => time(), 'frames' => $clean, 'ref' => $ref];
+            $ghosts[] = ['name' => $name, 'score' => $score, 'ts' => time(), 'frames' => $clean];
         }
         // スコア降順
-        usort($ghosts, function($a, $b) { return intval($b['score'] ?? 0) - intval($a['score'] ?? 0); });
-        // サイズ管理: 合計生サイズが大きいと末尾から削除（ゴーストのみ。レコードは独立で削除しない）
+        usort($ghosts, function($a, $b) { return $b['score'] - $a['score']; });
+        // サイズ管理: 合計生サイズが大きいと末尾から削除
         // O(n^2) の再エンコードを避けるため各エントリのサイズを事前計算し、合計を減算で管理
+        $evicted = [];
         if (count($ghosts) > 0) {
             $encOpts = JSON_UNESCAPED_UNICODE;
             $entrySizes = array_map(function($g) use ($encOpts) {
@@ -290,15 +208,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $lastSize = array_pop($entrySizes);
                 // 末尾エントリを削除すると 3(「, 」分) + エントリサイズ が減る
                 $totalSize -= 3 + $lastSize;
-                array_pop($ghosts);
+                $evicted[] = array_pop($ghosts)['name'];
             }
         }
-        if (!write_json($ghosts_file, $ghosts)) {
-            lock_off($fp);
-            fail_500('failed to save ghost');
+        write_json($ghosts_file, $ghosts);
+        // 破棄したゴーストのレコードも削除して整合性を保つ
+        if (count($evicted) > 0) {
+            $records = read_json($records_file, []);
+            $before = count($records);
+            $records = array_values(array_filter($records, function($r) use ($evicted) {
+                return !in_array($r['name'] ?? '', $evicted, true);
+            }));
+            if (count($records) !== $before) {
+                write_json($records_file, $records);
+            }
         }
-        // H2: ゴーストとレコードは独立したストアとして扱う。
-        // ゴーストの破棄時にレコードを削除しない（データ削除の禁止）。
         lock_off($fp);
         echo json_encode(['status' => 'success'], JSON_UNESCAPED_UNICODE);
         exit;
@@ -315,33 +239,30 @@ if ($action === 'rank') {
     $limit = max(1, min($limit, 100));
     $withGhosts = isset($_GET['with_ghosts']) && $_GET['with_ghosts'] === '1';
 
-    $records = read_json($records_file, [], 'validate_records');
-    $ghosts = read_json($ghosts_file, [], 'validate_ghosts');
-
+    $records = read_json($records_file, []);
+    $ghosts = read_json($ghosts_file, []);
+    
     // ゴーストを持つプレイヤーのみ対象（ゴーストなしのランキングは表示しない）
     $gmap = [];
     foreach ($ghosts as $g) {
-        $gn = $g['name'] ?? '';
-        if ($gn !== '' && !isset($gmap[$gn]) && !empty($g['frames'])) {
-            $gmap[$gn] = $g;
+        if (!isset($gmap[$g['name']]) && !empty($g['frames'])) {
+            $gmap[$g['name']] = $g;
         }
     }
-
+    
     // レコードとゴーストをマージ（ゴーストを持つプレイヤーのみ）
     $merged = [];
     foreach ($records as $r) {
-        $rn = $r['name'] ?? '';
-        if ($rn !== '' && isset($gmap[$rn])) {
+        if (isset($gmap[$r['name']])) {
             $merged[] = [
-                'name' => $rn,
-                'score' => intval($r['score'] ?? 0),
-                'ts' => intval($r['ts'] ?? 0),
-                'ghost' => $gmap[$rn]['frames'],
-                'ref' => intval($gmap[$rn]['ref'] ?? 0)
+                'name' => $r['name'],
+                'score' => intval($r['score']),
+                'ts' => $r['ts'],
+                'ghost' => $gmap[$r['name']]['frames']
             ];
         }
     }
-
+    
     // ゴーストしかない（レコード削除された）プレイヤーも追加
     foreach ($gmap as $name => $g) {
         $found = false;
@@ -351,10 +272,9 @@ if ($action === 'rank') {
         if (!$found) {
             $merged[] = [
                 'name' => $name,
-                'score' => intval($g['score'] ?? 0),
-                'ts' => intval($g['ts'] ?? 0),
-                'ghost' => $g['frames'],
-                'ref' => intval($g['ref'] ?? 0)
+                'score' => intval($g['score']),
+                'ts' => $g['ts'],
+                'ghost' => $g['frames']
             ];
         }
     }
@@ -369,19 +289,13 @@ if ($action === 'rank') {
 
 if ($action === 'ghost') {
     $name = clean_name($_GET['name'] ?? '');
-    $ghosts = read_json($ghosts_file, [], 'validate_ghosts');
+    $ghosts = read_json($ghosts_file, []);
     $found = null;
     foreach ($ghosts as $g) {
-        if (($g['name'] ?? '') === $name) { $found = $g; break; }
+        if ($g['name'] === $name) { $found = $g; break; }
     }
     if ($found) {
-        echo json_encode([
-            'status' => 'success',
-            'name' => $found['name'] ?? '',
-            'score' => intval($found['score'] ?? 0),
-            'frames' => $found['frames'] ?? [],
-            'ref' => intval($found['ref'] ?? 0)
-        ], JSON_UNESCAPED_UNICODE);
+        echo json_encode(['status' => 'success', 'name' => $found['name'], 'score' => $found['score'], 'frames' => $found['frames']], JSON_UNESCAPED_UNICODE);
     } else {
         http_response_code(404);
         echo json_encode(['status' => 'error', 'message' => 'not found'], JSON_UNESCAPED_UNICODE);
