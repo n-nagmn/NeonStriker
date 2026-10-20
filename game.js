@@ -1497,6 +1497,16 @@ class Game {
     this.enemiesKilled = 0;
     this.enemiesNeededForLevel = 15 + this.level * 5; // 15+5*1=20（レベル1）
     this.bossSpawned = false;
+    // Put a visible opening wave on screen immediately. Random-only spawning
+    // can leave the arena looking empty just after the player starts.
+    this.enemies = [
+      new Enemy('drone', this.level, this.player),
+      new Enemy('drone', this.level, this.player)
+    ];
+    this.enemies[0].x = LOGICAL_WIDTH * 0.3;
+    this.enemies[0].y = LOGICAL_HEIGHT * 0.2;
+    this.enemies[1].x = LOGICAL_WIDTH * 0.7;
+    this.enemies[1].y = LOGICAL_HEIGHT * 0.27;
     this.lastShotTime = 0; // Prevent the player from being unable to shoot after restart
 
     this.state = GameState.PLAYING;
@@ -2124,7 +2134,7 @@ class Game {
   // 背面 (WebGL): 星 → パーティクル → 自機レーザー
   // 前面 (2D)   : パワーアップ → 敵 → 自機 → 敵レーザー
   // 重ね順は従来の 1 枚構成と同じ。
-  draw() {
+  draw(dt = 1 / 60) {
     const ctx = this.ctx;
     const gl = (this.glLayer && this.glLayer.ok) ? this.glLayer : null;
 
@@ -2222,7 +2232,7 @@ class Game {
     const dt = Math.min(50, Math.max(0, dtMs)) / 1000;
 
     this.update(dt);
-    this.draw();
+    this.draw(dt);
     requestAnimationFrame((ts) => this.gameLoop(ts));
   }
 }
